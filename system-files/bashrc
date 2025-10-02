@@ -185,14 +185,14 @@ if [[ $- == *i* ]] && [[ -z "$ALM_REG_CHECK_DONE" ]]; then
   # Only proceed if ALM CLI is available and Docker is running
   if command -v alm >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
     # Silently check if init container is running (device needs registration)
-    local suffix="arm64"
-    [[ "$(uname -m)" == "x86_64" || "$(uname -m)" == "amd64" ]] && suffix="amd64"
+    _alm_suffix="arm64"
+    [[ "$(uname -m)" == "x86_64" || "$(uname -m)" == "amd64" ]] && _alm_suffix="amd64"
 
-    local init_running=$(docker ps --filter "name=alm_init_${suffix}" --filter "status=running" -q 2>/dev/null)
-    local main_running=$(docker ps --filter "name=alm_${suffix}" --filter "status=running" -q 2>/dev/null)
+    _alm_init_running=$(docker ps --filter "name=alm_init_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
+    _alm_main_running=$(docker ps --filter "name=alm_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
 
     # If init is running but main is not, device needs registration
-    if [[ -n "$init_running" && -z "$main_running" ]]; then
+    if [[ -n "$_alm_init_running" && -z "$_alm_main_running" ]]; then
       echo ""
       echo "╔════════════════════════════════════════════════════════════════════╗"
       echo "║  🚀 ALM Device Registration Required                               ║"
@@ -204,5 +204,8 @@ if [[ $- == *i* ]] && [[ -z "$ALM_REG_CHECK_DONE" ]]; then
       # Optionally auto-start registration (uncomment to enable)
       # alm register
     fi
+
+    # Clean up temporary variables
+    unset _alm_suffix _alm_init_running _alm_main_running
   fi
 fi
