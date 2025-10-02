@@ -169,7 +169,7 @@ set bell-style visible
 # Containerized ALM - Smart Registration Helper
 ###############################################################################
 
-# Only show registration info when init container running and main not started
+# Interactive registration check on login
 alm_registration_check() {
   # Silently check if we're in the right state
   if command -v docker >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && command -v qrencode >/dev/null 2>&1; then
@@ -185,8 +185,25 @@ alm_registration_check() {
       echo "╚════════════════════════════════════════════════════════════════════╝"
       echo ""
 
-      # Try to fetch registration URL
-      local url=$(curl -sf --max-time 2 http://localhost:8080/api/register-link 2>/dev/null | jq -r '.registration_url' 2>/dev/null)
+      # Try to fetch registration URL with retry logic
+      local url=""
+      local attempts=0
+      local max_attempts=3
+
+      while [[ $attempts -lt $max_attempts ]]; do
+        url=$(curl -sf --max-time 2 http://localhost:8080/api/register-link 2>/dev/null | jq -r '.registration_url' 2>/dev/null)
+
+        if [[ -n "$url" && "$url" != "null" ]]; then
+          break
+        fi
+
+        if [[ $attempts -eq 0 ]]; then
+          echo "⏳ Init container starting, waiting for registration API..."
+        fi
+
+        attempts=$((attempts + 1))
+        [[ $attempts -lt $max_attempts ]] && sleep 2
+      done
 
       if [[ -n "$url" && "$url" != "null" ]]; then
         echo "📱 Scan QR code or open URL to register this device:"
@@ -195,10 +212,42 @@ alm_registration_check() {
         echo ""
         echo "🔗 Registration URL: $url"
         echo ""
-        echo "💡 Run 'alm-register' for interactive setup"
+
+        # Make it interactive - wait for user
+        read -p "✋ Open the URL in your browser, complete registration, then press Enter..."
+
+        echo ""
+        echo "⏳ Waiting for main container to start..."
+
+        local timeout=60
+        local elapsed=0
+        while [[ $elapsed -lt $timeout ]]; do
+          local main_check=$(docker ps --filter "name=alm_arm64" --filter "status=running" -q 2>/dev/null)
+          if [[ -n "$main_check" ]]; then
+            local device_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+')
+            echo ""
+            echo "╔════════════════════════════════════════════════════════════════════╗"
+            echo "║  🎉 Registration Complete!                                        ║"
+            echo "╚════════════════════════════════════════════════════════════════════╝"
+            echo ""
+            echo "🌐 Main service running at: http://${device_ip}:80"
+            echo "📊 Check logs: docker logs -f alm_arm64"
+            echo ""
+            return 0
+          fi
+          sleep 2
+          elapsed=$((elapsed + 2))
+        done
+
+        echo ""
+        echo "⚠️  Main container didn't start. Check status with:"
+        echo "   docker compose ps"
+        echo "   docker logs alm_init_arm64"
+        echo ""
+        echo "💡 Or run 'alm-register' to try again"
         echo ""
       else
-        echo "⚠️  Init container starting... Run 'alm-register' in a moment"
+        echo "⚠️  Could not reach registration API. Try running 'alm-register' in a moment"
         echo ""
       fi
     fi
