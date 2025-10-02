@@ -41,7 +41,7 @@ is_in_container() {
 
 # Get device IP address
 get_device_ip() {
-    ip route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || echo "unknown"
+    ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+' || echo "unknown"
 }
 
 # Get architecture
