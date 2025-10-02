@@ -166,339 +166,43 @@ fi
 set bell-style visible
 
 ###############################################################################
-# Containerized ALM - Smart Registration Helper
+# ALM - Autonomous Local Manager Integration
 ###############################################################################
 
-# Interactive registration check on login
-alm_registration_check() {
-  # Silently check if we're in the right state
-  if command -v docker >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && command -v qrencode >/dev/null 2>&1; then
-    # Check if init container is running
-    local init_running=$(docker ps --filter "name=alm_init" --filter "status=running" -q 2>/dev/null)
-    # Check if main container is NOT running (not yet registered)
-    local main_running=$(docker ps --filter "name=alm_arm64" --filter "status=running" -q 2>/dev/null)
+# The ALM CLI is provided as a standalone script at /opt/alm/bin/alm
+# This section integrates it with the shell environment
 
+# Ensure ALM bin directory is in PATH (already added above, but verify)
+if [[ -d "/opt/alm/bin" ]] && [[ ":$PATH:" != *":/opt/alm/bin:"* ]]; then
+  export PATH="/opt/alm/bin:$PATH"
+fi
+
+# Interactive registration check on login
+# This runs once per shell session to detect if device needs registration
+if [[ $- == *i* ]] && [[ -z "$ALM_REG_CHECK_DONE" ]]; then
+  export ALM_REG_CHECK_DONE=1
+
+  # Only proceed if ALM CLI is available and Docker is running
+  if command -v alm >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
+    # Silently check if init container is running (device needs registration)
+    local suffix="arm64"
+    [[ "$(uname -m)" == "x86_64" || "$(uname -m)" == "amd64" ]] && suffix="amd64"
+
+    local init_running=$(docker ps --filter "name=alm_init_${suffix}" --filter "status=running" -q 2>/dev/null)
+    local main_running=$(docker ps --filter "name=alm_${suffix}" --filter "status=running" -q 2>/dev/null)
+
+    # If init is running but main is not, device needs registration
     if [[ -n "$init_running" && -z "$main_running" ]]; then
       echo ""
       echo "╔════════════════════════════════════════════════════════════════════╗"
       echo "║  🚀 ALM Device Registration Required                               ║"
       echo "╚════════════════════════════════════════════════════════════════════╝"
       echo ""
-
-      # Try to fetch registration URL with retry logic
-      local url=""
-      local attempts=0
-      local max_attempts=3
-
-      while [[ $attempts -lt $max_attempts ]]; do
-        url=$(curl -sf --max-time 2 http://localhost:8080/api/register-link 2>/dev/null | jq -r '.registration_url' 2>/dev/null)
-
-        if [[ -n "$url" && "$url" != "null" ]]; then
-          break
-        fi
-
-        if [[ $attempts -eq 0 ]]; then
-          echo "⏳ Init container starting, waiting for registration API..."
-        fi
-
-        attempts=$((attempts + 1))
-        [[ $attempts -lt $max_attempts ]] && sleep 2
-      done
-
-      if [[ -n "$url" && "$url" != "null" ]]; then
-        echo "📱 Scan QR code or open URL to register this device:"
-        echo ""
-        qrencode -t UTF8i "$url" 2>/dev/null || echo "$url"
-        echo ""
-        echo "🔗 Registration URL: $url"
-        echo ""
-
-        # Make it interactive - wait for user
-        read -p "✋ Open the URL in your browser, complete registration, then press Enter..."
-
-        echo ""
-        echo "⏳ Waiting for main container to start..."
-
-        local timeout=60
-        local elapsed=0
-        while [[ $elapsed -lt $timeout ]]; do
-          local main_check=$(docker ps --filter "name=alm_arm64" --filter "status=running" -q 2>/dev/null)
-          if [[ -n "$main_check" ]]; then
-            local device_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+')
-            echo ""
-            echo "╔════════════════════════════════════════════════════════════════════╗"
-            echo "║  🎉 Registration Complete!                                         ║"
-            echo "╚════════════════════════════════════════════════════════════════════╝"
-            echo ""
-            echo "🌐 Main service running at: http://${device_ip}:80"
-            echo "📊 Check logs: docker logs -f alm_arm64"
-            echo ""
-            return 0
-          fi
-          sleep 2
-          elapsed=$((elapsed + 2))
-        done
-
-        echo ""
-        echo "⚠️  Main container didn't start. Check status with:"
-        echo "   docker compose ps"
-        echo "   docker logs alm_init_arm64"
-        echo ""
-        echo "💡 Or run 'alm register' to try again"
-        echo ""
-      else
-        echo "⚠️  Could not reach registration API. Try running 'alm register' in a moment"
-        echo ""
-      fi
-    fi
-  fi
-}
-
-# ALM CLI - Main command with subcommands
-alm() {
-  local subcommand="${1:-help}"
-  shift 2>/dev/null || true
-
-  case "$subcommand" in
-    register)
-      _alm_register "$@"
-      ;;
-    status)
-      _alm_status "$@"
-      ;;
-    logs)
-      _alm_logs "$@"
-      ;;
-    restart)
-      _alm_restart "$@"
-      ;;
-    help|--help|-h)
-      _alm_help
-      ;;
-    *)
-      echo "❌ Unknown command: $subcommand"
+      echo "Run: alm register"
       echo ""
-      _alm_help
-      return 1
-      ;;
-  esac
-}
 
-# Subcommand: Register device interactively
-_alm_register() {
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "❌ Docker not installed"
-    return 1
-  fi
-
-  if ! command -v jq >/dev/null 2>&1; then
-    echo "⚠️  Installing jq for JSON parsing..."
-    sudo apt-get update -qq && sudo apt-get install -y jq
-  fi
-
-  if ! command -v qrencode >/dev/null 2>&1; then
-    echo "⚠️  Installing qrencode for QR codes..."
-    sudo apt-get update -qq && sudo apt-get install -y qrencode
-  fi
-
-  echo "🔍 Checking registration status..."
-
-  local init_running=$(docker ps --filter "name=alm_init" --filter "status=running" -q)
-  local main_running=$(docker ps --filter "name=alm_arm64" --filter "status=running" -q)
-
-  if [[ -n "$main_running" ]]; then
-    echo "✅ Device already registered and running!"
-    local device_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+')
-    echo "🌐 Main service: http://${device_ip}:80"
-    return 0
-  fi
-
-  if [[ -z "$init_running" ]]; then
-    echo "❌ Init container not running. Starting containers..."
-    cd /opt/alm 2>/dev/null || { echo "❌ /opt/alm not found"; return 1; }
-
-    local arch=$(uname -m)
-    if [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
-      sudo docker compose up -d alm_arm64
-    else
-      sudo docker compose up -d alm_amd64
+      # Optionally auto-start registration (uncomment to enable)
+      # alm register
     fi
-
-    echo "⏳ Waiting for init container to start..."
-    sleep 5
   fi
-
-  echo ""
-  echo "📡 Fetching registration URL..."
-  local url=$(curl -sf --max-time 5 http://localhost:8080/api/register-link | jq -r '.registration_url')
-
-  if [[ -z "$url" || "$url" == "null" ]]; then
-    echo "❌ Could not fetch registration URL. Check if init container is healthy:"
-    echo "   docker logs alm_init_arm64"
-    return 1
-  fi
-
-  echo ""
-  echo "╔════════════════════════════════════════════════════════════════════╗"
-  echo "║  📱 Scan QR Code or Open URL                                       ║"
-  echo "╚════════════════════════════════════════════════════════════════════╝"
-  echo ""
-  qrencode -t UTF8i "$url"
-  echo ""
-  echo "🔗 $url"
-  echo ""
-  read -p "✋ Complete registration in browser, then press Enter to continue..."
-
-  echo ""
-  echo "📤 Submitting registration..."
-  curl -sf -X POST http://localhost:8080/api/register | jq . || {
-    echo "⚠️  Registration submission failed. Check browser for status."
-  }
-
-  echo ""
-  echo "⏳ Waiting for main container to start..."
-  local timeout=60
-  local elapsed=0
-
-  while [[ $elapsed -lt $timeout ]]; do
-    if docker ps --filter "name=alm_arm64" --filter "status=running" -q | grep -q .; then
-      echo "✅ Main container is running!"
-      local device_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+')
-      echo ""
-      echo "╔════════════════════════════════════════════════════════════════════╗"
-      echo "║  🎉 Registration Complete!                                         ║"
-      echo "╚════════════════════════════════════════════════════════════════════╝"
-      echo ""
-      echo "🌐 Main service: http://${device_ip}:80"
-      echo "📊 Check logs: docker logs -f alm_arm64"
-      echo ""
-      return 0
-    fi
-    sleep 2
-    elapsed=$((elapsed + 2))
-  done
-
-  echo "⏰ Timeout waiting for main container. Check status:"
-  echo "   docker compose ps"
-  echo "   docker logs alm_init_arm64"
-}
-
-# Subcommand: Show device and container status
-_alm_status() {
-  echo "╔════════════════════════════════════════════════════════════════════╗"
-  echo "║  📊 ALM Device Status                                              ║"
-  echo "╚════════════════════════════════════════════════════════════════════╝"
-  echo ""
-
-  # Device info
-  local device_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+')
-  echo "🖥️  Device IP: ${device_ip:-Unknown}"
-  echo "🏷️  Hostname: $(hostname)"
-  echo "🔧 Architecture: $(uname -m)"
-  echo ""
-
-  # Container status
-  if command -v docker >/dev/null 2>&1; then
-    echo "📦 Containers:"
-    local init_status=$(docker ps -a --filter "name=alm_init" --format "{{.Names}}: {{.Status}}" 2>/dev/null)
-    local main_status=$(docker ps -a --filter "name=alm_arm64" --format "{{.Names}}: {{.Status}}" 2>/dev/null || docker ps -a --filter "name=alm_amd64" --format "{{.Names}}: {{.Status}}" 2>/dev/null)
-
-    if [[ -n "$init_status" ]]; then
-      echo "   Init: $init_status"
-    else
-      echo "   Init: Not found"
-    fi
-
-    if [[ -n "$main_status" ]]; then
-      echo "   Main: $main_status"
-    else
-      echo "   Main: Not found"
-    fi
-
-    echo ""
-
-    # Service URLs
-    local main_running=$(docker ps --filter "name=alm_arm64" --filter "status=running" -q 2>/dev/null || docker ps --filter "name=alm_amd64" --filter "status=running" -q 2>/dev/null)
-    local init_running=$(docker ps --filter "name=alm_init" --filter "status=running" -q 2>/dev/null)
-
-    if [[ -n "$main_running" ]]; then
-      echo "✅ Main service: http://${device_ip}:80"
-    elif [[ -n "$init_running" ]]; then
-      echo "⏳ Registration: http://${device_ip}:8080 (pending)"
-    else
-      echo "❌ No services running"
-    fi
-  else
-    echo "❌ Docker not available"
-  fi
-}
-
-# Subcommand: Show container logs
-_alm_logs() {
-  local container="${1:-main}"
-
-  case "$container" in
-    init)
-      echo "📋 Init container logs:"
-      docker logs -f --tail=50 alm_init_arm64 2>/dev/null || docker logs -f --tail=50 alm_init_amd64 2>/dev/null || echo "❌ Init container not found"
-      ;;
-    main|app)
-      echo "📋 Main container logs:"
-      docker logs -f --tail=50 alm_arm64 2>/dev/null || docker logs -f --tail=50 alm_amd64 2>/dev/null || echo "❌ Main container not found"
-      ;;
-    *)
-      echo "❌ Unknown container: $container"
-      echo "Usage: alm logs [init|main]"
-      return 1
-      ;;
-  esac
-}
-
-# Subcommand: Restart containers
-_alm_restart() {
-  echo "🔄 Restarting ALM service..."
-
-  if [[ ! -d /opt/alm ]]; then
-    echo "❌ /opt/alm directory not found"
-    return 1
-  fi
-
-  cd /opt/alm || return 1
-
-  sudo systemctl restart strealer-container.service
-
-  echo "⏳ Waiting for service to start..."
-  sleep 5
-
-  alm status
-}
-
-# Subcommand: Show help
-_alm_help() {
-  echo "╔════════════════════════════════════════════════════════════════════╗"
-  echo "║  🚀 ALM CLI - Autonomous Local Manager                             ║"
-  echo "╚════════════════════════════════════════════════════════════════════╝"
-  echo ""
-  echo "Usage: alm <command> [options]"
-  echo ""
-  echo "Commands:"
-  echo "  register      Interactive device registration"
-  echo "  status        Show device and container status"
-  echo "  logs [init|main]  Show container logs (default: main)"
-  echo "  restart       Restart ALM service"
-  echo "  help          Show this help message"
-  echo ""
-  echo "Examples:"
-  echo "  alm register       # Register this device interactively"
-  echo "  alm status         # Check current status"
-  echo "  alm logs init      # View init container logs"
-  echo "  alm logs main      # View main container logs"
-  echo "  alm restart        # Restart the service"
-  echo ""
-}
-
-# Show registration check on login (only for interactive shells)
-if [[ $- == *i* ]] && [[ -z "$ALM_REG_CHECK_DONE" ]]; then
-  export ALM_REG_CHECK_DONE=1
-  alm_registration_check
 fi

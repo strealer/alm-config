@@ -13,6 +13,7 @@ This public repository eliminates the need for GitHub Personal Access Tokens (PA
 ```
 alm-config/
 └── system-files/
+    ├── alm                                 # CLI tool for device management (register, status, logs, restart)
     ├── bashrc                              # Shell environment for almuser and root
     ├── configure_puppet_agent.service      # Systemd service for first-boot Puppet registration
     └── strealer-container.service          # Systemd service for multi-container ALM lifecycle
@@ -20,18 +21,108 @@ alm-config/
 
 ## Files Overview
 
+### `system-files/alm`
+
+**Standalone CLI tool for device management** - Comprehensive command-line interface for ALM operations.
+
+**Deployed to**: `/opt/alm/bin/alm`
+
+**Commands**:
+- `alm register` - Interactive device registration with init container
+  - Auto-detects registration state
+  - Waits for init container API (retry logic)
+  - Displays QR code and registration URL
+  - Monitors main container startup
+  - Supports `--auto` mode for non-interactive use
+- `alm status` - Show device and container status
+  - Device IP, hostname, architecture
+  - Docker service status
+  - Container states (init and main)
+  - Service accessibility
+- `alm logs [init|main]` - Follow container logs in real-time
+  - Default: main container
+  - Supports `--no-follow`, `--tail N` options
+- `alm restart` - Restart ALM systemd service
+  - Stops containers gracefully
+  - Pulls latest images
+  - Starts containers
+  - Shows updated status
+
+**Usage Examples**:
+```bash
+# Interactive registration
+alm register
+
+# Check device status
+alm status
+
+# View logs
+alm logs init          # Init container logs
+alm logs main          # Main container logs
+
+# Restart service
+alm restart
+
+# Get help
+alm help
+alm register --help
+```
+
+**Design Philosophy**:
+- **Standalone script** - Not embedded in bashrc for clean separation
+- **User-focused** - Designed for manual execution by SSH users
+- **Comprehensive help** - Each command has detailed `--help` output
+- **Error handling** - Clear error messages with troubleshooting steps
+- **Multi-architecture** - Auto-detects ARM64/AMD64 containers
+- **Colored output** - Visual feedback with emoji and ANSI colors
+
+**No sensitive data** - Safe for public distribution
+
+---
+
 ### `system-files/bashrc`
 
-Standardized Bash shell environment with:
+Standardized Bash shell environment with **ALM CLI integration**:
+
+**ALM Integration:**
+- **Adds `/opt/alm/bin` to PATH** - Makes `alm` command available
+- **Auto-detects registration needs** - Checks on SSH login if device needs registration
+- **Suggests registration** - Shows banner and recommends `alm register` command
+- **Clean separation** - All device management logic lives in `/opt/alm/bin/alm`, not bashrc
+
+**Standard Shell Enhancements:**
 - **Enhanced history management** - Timestamped, cross-session synchronization
-- **Safer core utilities** - Interactive prompts for destructive operations
+- **Safer core utilities** - Interactive prompts for destructive operations (cp, mv, rm)
 - **Raspberry Pi telemetry** - Temperature, throttling, power monitoring aliases
 - **Development conveniences** - Smart archive extractor, git-aware prompt
-- **ALM-specific paths** - `/opt/alm/bin` in PATH
+- **Navigation helpers** - `..`, `...`, `up`, `mkcd` shortcuts
 
 **Deployed to**:
 - `/home/almuser/.bashrc`
 - `/root/.bashrc`
+
+**Login Experience:**
+```bash
+# User SSHs into device
+ssh almuser@device-ip
+
+# If device needs registration, bashrc shows:
+╔════════════════════════════════════════════════════════════════════╗
+║  🚀 ALM Device Registration Required                               ║
+╚════════════════════════════════════════════════════════════════════╝
+
+Run: alm register
+
+# User runs registration command
+almuser@device:~$ alm register
+# [Interactive registration starts...]
+```
+
+**Benefits of Standalone CLI:**
+- **Cleaner bashrc** - Shell config separated from device management
+- **Better UX** - Comprehensive help system with `--help` flags
+- **Maintainability** - Single script easier to update and test
+- **Reusability** - Can be called from scripts, cron jobs, or manually
 
 **No sensitive data** - Safe for public distribution
 
@@ -82,6 +173,11 @@ Files are downloaded during **stage3** of the custom Raspberry Pi OS image build
 ```bash
 ALM_CONFIG_REPO_URL="https://raw.githubusercontent.com/strealer/alm-config/main/system-files"
 
+# Download ALM CLI tool
+mkdir -p /opt/alm/bin
+curl -fsSL -o /opt/alm/bin/alm "${ALM_CONFIG_REPO_URL}/alm"
+chmod 755 /opt/alm/bin/alm
+
 # Download systemd services
 curl -fsSL -o /etc/systemd/system/configure_puppet_agent.service \
     "${ALM_CONFIG_REPO_URL}/configure_puppet_agent.service"
@@ -106,6 +202,28 @@ Puppet downloads these files every 30 minutes to ensure edge devices stay synchr
 class profiles::raspberry_pi (
   $config_repo_url = 'https://raw.githubusercontent.com/strealer/alm-config/main/system-files',
 ) {
+
+  # Ensure /opt/alm/bin directory exists
+  file { '/opt/alm/bin':
+    ensure => directory,
+    owner  => 'root',
+    group  => 'root',
+    mode   => '0755',
+  }
+
+  # Download ALM CLI tool
+  exec { 'download_alm_cli':
+    command => "curl -fsSL -o /opt/alm/bin/alm ${config_repo_url}/alm",
+    creates => '/opt/alm/bin/alm',
+  }
+
+  file { '/opt/alm/bin/alm':
+    ensure  => file,
+    owner   => 'root',
+    group   => 'root',
+    mode    => '0755',
+    require => Exec['download_alm_cli'],
+  }
 
   # Download strealer-container.service
   exec { 'download_strealer_service':
@@ -162,7 +280,7 @@ class profiles::raspberry_pi (
 pi-gen build → Embed files from alm-config → Flash to SD card → Boot device
 ```
 
-### 2️⃣ **First Boot Registration** (Automated)
+### 2️⃣ **First Boot Puppet Registration** (Automated)
 ```
 Device boots → configure_puppet_agent.service runs →
 Downloads /opt/configure_puppet_agent.sh (private) →
@@ -173,11 +291,40 @@ Registers with puppet.strealer.io → Auto-disables service
 ```
 Puppet agent runs (30-min intervals) →
 Downloads latest strealer-container.service →
-Starts Docker containers →
-Web registration available at http://hostname.local:8080
+Starts Docker containers (init + main) →
+Init container ready on port 8080
 ```
 
-### 4️⃣ **Ongoing Updates** (Automated)
+### 4️⃣ **Interactive Device Registration** (User Action Required)
+```
+User SSHs into device → bashrc shows registration banner →
+User runs: alm register →
+Opens displayed QR code/URL in browser →
+Completes device registration form →
+Presses Enter in SSH session →
+Main container starts automatically →
+Service ready on port 80
+```
+
+**What happens automatically:**
+1. Init container starts and exposes web registration on port 8080
+2. Bashrc detects init container running (shows banner: "Run: alm register")
+3. User runs `alm register` command
+4. CLI waits for registration API to be ready (auto-retry 3x)
+5. Displays QR code + registration URL
+6. Waits for user input (interactive prompt)
+7. Monitors main container startup after registration
+8. Shows success message with service URL
+
+**User only needs to:**
+- SSH into device
+- Run: `alm register` (suggested by bashrc banner)
+- Open displayed URL in browser
+- Fill registration form
+- Press Enter in SSH session
+- Done! Main service running at http://device-ip:80
+
+### 5️⃣ **Ongoing Updates** (Automated)
 ```
 Puppet ensures configuration files stay current →
 Docker Compose pulls latest images →
