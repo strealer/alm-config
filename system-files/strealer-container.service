@@ -7,7 +7,7 @@ Requires=docker.service
 Type=oneshot
 User=root
 WorkingDirectory=/opt/alm
-ExecStartPre=/usr/bin/docker compose pull
+ExecStartPre=/bin/bash -c 'ARCH=$(uname -m); if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then docker compose pull alm_arm64; else docker compose pull alm_amd64; fi'
 ExecStart=/bin/bash -c 'ARCH=$(uname -m); if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then docker compose up -d --remove-orphans alm_arm64; else docker compose up -d --remove-orphans alm_amd64; fi'
 ExecStop=/usr/bin/docker compose down
 RemainAfterExit=yes
