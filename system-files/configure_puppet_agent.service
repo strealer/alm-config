@@ -1,0 +1,17 @@
+[Unit]
+Description=Run Puppet Bootstrap at First Boot Until Successful
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/configure_puppet_agent.sh
+Restart=always
+RestartSec=30
+StartLimitBurst=0
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=configure_puppet_agent
+
+[Install]
+WantedBy=multi-user.target
