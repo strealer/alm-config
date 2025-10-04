@@ -200,29 +200,69 @@ EOF
         return 0
     fi
 
-    # Interactive prompt
-    echo -e "${BLUE}Instructions:${NC}"
-    echo "  1. Open the URL above in your browser (or scan QR code)"
-    echo "  2. Complete the device registration form"
-    echo "  3. Return here and press Enter when done"
+    # Interactive prompt with prominent instructions
+    echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BLUE}║${NC}  ${YELLOW}IMPORTANT: Complete registration before continuing${NC}        ${BLUE}║${NC}"
+    echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  1. Open the URL above in your browser (or scan QR code)"
+    echo -e "  2. Fill out the device registration form"
+    echo -e "  3. Submit the form and wait for confirmation"
+    echo -e "  4. ${YELLOW}Only then${NC} return here and press Enter"
     echo ""
 
-    read -r -p "✋ Press Enter after completing registration... "
+    # Wait for user confirmation
+    while true; do
+        read -r -p "Have you completed the registration? [y/n]: " response
+
+        case "$response" in
+            [Yy]*)
+                break
+                ;;
+            [Nn]*)
+                echo ""
+                log_info "Please complete the registration in your browser first."
+                echo ""
+                ;;
+            *)
+                echo "Please answer 'y' for yes or 'n' for no."
+                ;;
+        esac
+    done
 
     echo ""
-    log_info "Monitoring main container startup..."
+    log_info "Waiting for registration to complete and main container to start..."
+    echo ""
+    echo "This will:"
+    echo "  1. Wait for init container to detect registration"
+    echo "  2. Wait for init container to exit successfully"
+    echo "  3. Wait for main container to start automatically"
+    echo ""
 
-    # Monitor main container startup with timeout
-    local timeout=60
+    # Monitor main container startup with extended timeout
+    local timeout=120  # 2 minutes should be enough
     local elapsed=0
     local check_interval=2
 
     while [[ $elapsed -lt $timeout ]]; do
+        # Check if init container has exited (registration complete)
+        local init_status
+        init_status=$(docker ps -a --filter "name=alm_init_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
+
+        if echo "$init_status" | grep -q "Exited"; then
+            echo ""
+            log_success "Init container completed - registration detected!"
+            echo ""
+            log_info "Waiting for main container to start..."
+            sleep 3
+        fi
+
+        # Check if main container is running
         main_running=$(docker ps --filter "name=alm_${suffix}" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
 
         if [[ -n "$main_running" ]]; then
             echo ""
-            log_success "Registration complete! Main container is running."
+            log_success "Main container is running!"
             echo ""
             echo -e "${GREEN}Service URL:${NC} http://$(get_device_ip):80"
             echo ""
@@ -232,22 +272,37 @@ EOF
         sleep $check_interval
         elapsed=$((elapsed + check_interval))
 
-        # Progress indicator
+        # Progress indicator every 10 seconds
         if (( elapsed % 10 == 0 )); then
             echo -n "."
+        fi
+
+        # Show helpful message at 30 seconds
+        if [[ $elapsed -eq 30 ]]; then
+            echo ""
+            echo ""
+            log_warning "Still waiting... Make sure you completed the registration form!"
+            echo "Registration URL: $(curl -sf http://localhost:8080/api/register-link 2>/dev/null | jq -r '.registration_url' || echo 'check above')"
+            echo ""
         fi
     done
 
     # Timeout reached
     echo ""
-    log_warning "Main container didn't start within ${timeout} seconds."
     echo ""
-    echo "This might be normal if registration is still processing."
+    log_error "Timeout: Main container didn't start within ${timeout} seconds"
+    echo ""
+    echo "Possible reasons:"
+    echo "  • Registration form not submitted in browser"
+    echo "  • Init container stuck or failed"
+    echo "  • Network or API issues"
     echo ""
     echo "Check status:"
     echo "  alm status"
     echo "  alm logs init"
-    echo "  alm logs main"
+    echo ""
+    echo "Or reset and try again:"
+    echo "  alm reset"
 
     return 1
 }
@@ -482,6 +537,138 @@ EOF
 }
 
 #
+# Command: alm reset
+# Reset device to allow fresh registration
+#
+cmd_reset() {
+    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+        cat <<EOF
+Usage: alm reset
+
+Reset the ALM device to start fresh registration.
+
+${RED}WARNING: This will:${NC}
+  1. Stop and remove all containers
+  2. Delete all configuration and registration data
+  3. Remove Docker volumes
+  4. Restart service for fresh setup
+
+Use this when:
+  • Registration is stuck or incomplete
+  • Need to re-register the device
+  • Want to start configuration from scratch
+
+Requires: sudo privileges
+
+Examples:
+  alm reset
+EOF
+        return 0
+    fi
+
+    echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║${NC}  ${YELLOW}WARNING: This will delete all ALM data and config${NC}         ${RED}║${NC}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "This will:"
+    echo "  • Stop all running containers"
+    echo "  • Remove all containers and volumes"
+    echo "  • Delete registration and configuration data"
+    echo "  • Reset device to fresh state"
+    echo ""
+
+    read -r -p "Are you sure you want to reset? [y/N]: " response
+
+    if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        log_info "Reset cancelled"
+        return 0
+    fi
+
+    echo ""
+    log_info "Stopping ALM service..."
+    sudo systemctl stop strealer-container.service 2>/dev/null || true
+
+    echo ""
+    log_info "Removing containers..."
+
+    local suffix
+    suffix=$(get_container_suffix)
+
+    # Stop and remove containers
+    sudo docker stop "alm_init_${suffix}" 2>/dev/null || true
+    sudo docker stop "alm_${suffix}" 2>/dev/null || true
+    sudo docker rm "alm_init_${suffix}" 2>/dev/null || true
+    sudo docker rm "alm_${suffix}" 2>/dev/null || true
+
+    echo ""
+    log_info "Removing Docker volumes..."
+
+    # Remove volumes
+    cd /opt/alm 2>/dev/null || true
+    sudo docker compose down -v 2>/dev/null || true
+
+    # Clean up any orphaned volumes
+    sudo docker volume ls -q | grep -E "alm_config|alm_persist" | xargs -r sudo docker volume rm 2>/dev/null || true
+
+    echo ""
+    log_success "Reset complete!"
+    echo ""
+    log_info "Starting init container..."
+
+    # Start init container directly (faster than systemctl, handles race conditions)
+    cd /opt/alm
+
+    # Detect architecture
+    local arch
+    arch=$(uname -m)
+    local init_container="alm_init_arm64"
+    if [[ "$arch" != "aarch64" && "$arch" != "arm64" ]]; then
+        init_container="alm_init_amd64"
+    fi
+
+    # Pull and start init container (idempotent - safe even if service also starts it)
+    sudo docker compose pull "$init_container" 2>&1 | grep -v "Pulling" || true
+    sudo docker compose up -d --remove-orphans "$init_container"
+
+    echo ""
+    log_info "Waiting for init container to be ready..."
+
+    # Wait for init container to be healthy
+    local timeout=60
+    local elapsed=0
+    local container_ready=false
+
+    while [[ $elapsed -lt $timeout ]]; do
+        if sudo docker ps --filter "name=alm_init" --filter "health=healthy" --format "{{.Names}}" | grep -q "alm_init"; then
+            container_ready=true
+            break
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+        if (( elapsed % 10 == 0 )); then
+            echo -n "."
+        fi
+    done
+    echo ""
+
+    if [[ "$container_ready" == "false" ]]; then
+        log_error "Init container failed to start"
+        log_info "Check logs with: sudo docker logs $init_container"
+        return 1
+    fi
+
+    echo ""
+    log_success "Device reset successfully!"
+    echo ""
+    echo "Init container ready at http://$(get_device_ip):8080"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Run: alm register"
+    echo "  2. Complete registration in browser"
+    echo "  3. Done!"
+}
+
+#
 # Command: alm help
 # Show usage information
 #
@@ -499,6 +686,7 @@ ${BLUE}Commands:${NC}
   ${GREEN}status${NC}      Show device and container status
   ${GREEN}logs${NC}        Follow container logs in real-time
   ${GREEN}restart${NC}     Restart ALM service
+  ${GREEN}reset${NC}       Reset device for fresh registration (deletes all data)
   ${GREEN}help${NC}        Show this help message
 
 ${BLUE}Examples:${NC}
@@ -507,11 +695,13 @@ ${BLUE}Examples:${NC}
   alm logs init         # View init container logs
   alm logs main         # View main container logs
   alm restart           # Restart ALM service
+  alm reset             # Reset device to start fresh
 
 ${BLUE}Get Help for Specific Commands:${NC}
   alm register --help
   alm logs --help
   alm restart --help
+  alm reset --help
 
 ${BLUE}Quick Start:${NC}
   1. SSH into device
@@ -561,6 +751,9 @@ main() {
             ;;
         restart)
             cmd_restart "$@"
+            ;;
+        reset)
+            cmd_reset "$@"
             ;;
         help|--help|-h)
             cmd_help

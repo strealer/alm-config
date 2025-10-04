@@ -193,16 +193,8 @@ if [[ $- == *i* ]] && [[ -z "$ALM_REG_CHECK_DONE" ]]; then
 
     # If init is running but main is not, device needs registration
     if [[ -n "$_alm_init_running" && -z "$_alm_main_running" ]]; then
-      echo ""
-      echo "╔════════════════════════════════════════════════════════════════════╗"
-      echo "║  🚀 ALM Device Registration Required                               ║"
-      echo "╚════════════════════════════════════════════════════════════════════╝"
-      echo ""
-      echo "Run: alm register"
-      echo ""
-
-      # Optionally auto-start registration (uncomment to enable)
-      # alm register
+      # Auto-start registration
+      alm register
     fi
 
     # Clean up temporary variables
