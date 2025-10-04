@@ -284,6 +284,10 @@ EOF
             log_warning "Still waiting... Make sure you completed the registration form!"
             echo "Registration URL: $(curl -sf http://localhost:8080/api/register-link 2>/dev/null | jq -r '.registration_url' || echo 'check above')"
             echo ""
+            echo "If you've completed registration but it's stuck, you can:"
+            echo "  1. Press Ctrl+C to cancel this"
+            echo "  2. Run: alm start-main"
+            echo ""
         fi
     done
 
@@ -669,6 +673,79 @@ EOF
 }
 
 #
+# Command: alm start-main
+# Force start main container (workaround for init container not exiting)
+#
+cmd_start_main() {
+    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+        cat <<EOF
+Usage: alm start-main
+
+Force start the main ALM container, bypassing init container dependency.
+
+${YELLOW}Use this when:${NC}
+  • Registration is complete but init container won't exit
+  • Main container won't start automatically
+  • Init container appears stuck
+
+This command:
+  1. Stops init container
+  2. Starts main container directly
+  3. Shows service status
+
+${RED}WARNING:${NC} Only use after completing registration!
+
+Examples:
+  alm start-main
+EOF
+        return 0
+    fi
+
+    local suffix
+    suffix=$(get_container_suffix)
+
+    echo -e "${YELLOW}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║${NC}  Force starting main container (bypassing init)            ${YELLOW}║${NC}"
+    echo -e "${YELLOW}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    log_info "Stopping init container..."
+    sudo docker stop "alm_init_${suffix}" 2>/dev/null || true
+    sudo docker rm "alm_init_${suffix}" 2>/dev/null || true
+
+    echo ""
+    log_info "Starting main container..."
+
+    cd /opt/alm || { log_error "/opt/alm not found"; return 1; }
+
+    # Start main container without dependency check
+    if ! sudo docker compose up -d --no-deps "alm_${suffix}"; then
+        log_error "Failed to start main container"
+        return 1
+    fi
+
+    echo ""
+    log_info "Waiting for main container to be ready..."
+    sleep 5
+
+    # Check if running
+    if docker ps --filter "name=alm_${suffix}" --filter "status=running" -q | grep -q .; then
+        echo ""
+        log_success "Main container is running!"
+        echo ""
+        echo -e "${GREEN}Service URL:${NC} http://$(get_device_ip):80"
+        echo ""
+        return 0
+    else
+        echo ""
+        log_error "Main container failed to start"
+        echo ""
+        echo "Check logs with: alm logs main"
+        return 1
+    fi
+}
+
+#
 # Command: alm help
 # Show usage information
 #
@@ -682,12 +759,13 @@ ${BLUE}Usage:${NC}
   alm <command> [options]
 
 ${BLUE}Commands:${NC}
-  ${GREEN}register${NC}    Interactive device registration via web interface
-  ${GREEN}status${NC}      Show device and container status
-  ${GREEN}logs${NC}        Follow container logs in real-time
-  ${GREEN}restart${NC}     Restart ALM service
-  ${GREEN}reset${NC}       Reset device for fresh registration (deletes all data)
-  ${GREEN}help${NC}        Show this help message
+  ${GREEN}register${NC}     Interactive device registration via web interface
+  ${GREEN}status${NC}       Show device and container status
+  ${GREEN}logs${NC}         Follow container logs in real-time
+  ${GREEN}restart${NC}      Restart ALM service
+  ${GREEN}reset${NC}        Reset device for fresh registration (deletes all data)
+  ${GREEN}start-main${NC}   Force start main container (if registration stuck)
+  ${GREEN}help${NC}         Show this help message
 
 ${BLUE}Examples:${NC}
   alm register          # Start interactive device registration
@@ -754,6 +832,9 @@ main() {
             ;;
         reset)
             cmd_reset "$@"
+            ;;
+        start-main)
+            cmd_start_main "$@"
             ;;
         help|--help|-h)
             cmd_help

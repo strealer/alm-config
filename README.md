@@ -28,40 +28,107 @@ alm-config/
 **Deployed to**: `/opt/alm/bin/alm`
 
 **Commands**:
-- `alm register` - Interactive device registration with init container
-  - Auto-detects registration state
-  - Waits for init container API (retry logic)
-  - Displays QR code and registration URL
-  - Monitors main container startup
-  - Supports `--auto` mode for non-interactive use
-- `alm status` - Show device and container status
-  - Device IP, hostname, architecture
-  - Docker service status
-  - Container states (init and main)
-  - Service accessibility
-- `alm logs [init|main]` - Follow container logs in real-time
-  - Default: main container
-  - Supports `--no-follow`, `--tail N` options
-- `alm restart` - Restart ALM systemd service
-  - Stops containers gracefully
-  - Pulls latest images
-  - Starts containers
-  - Shows updated status
+
+#### `alm register`
+Interactive device registration with init container web interface.
+
+**Features**:
+- Auto-detects registration state
+- Waits for init container API (3 retries, 2s intervals)
+- Displays QR code and registration URL
+- User confirmation (y/n) before proceeding
+- Extended monitoring (120s timeout)
+- Progress indicators and helpful reminders
+- Detects init container exit and main container startup
+- Supports `--auto` mode for non-interactive use
+
+**Flow**:
+```
+1. Shows QR code + registration URL
+2. User completes registration in browser
+3. User confirms with 'y'
+4. Waits for init to exit and main to start
+5. Shows success with service URL
+```
+
+#### `alm status`
+Show device and container status overview.
+
+**Displays**:
+- Device IP, hostname, architecture
+- Docker service status
+- Init container status
+- Main container status
+- Service URLs (port 8080 for init, port 80 for main)
+
+#### `alm logs [init|main]`
+Follow container logs in real-time.
+
+**Options**:
+- `init` - Init container logs
+- `main` - Main container logs (default)
+- `--no-follow` - Show logs without following
+- `--tail N` - Show last N lines (default: 50)
+
+#### `alm restart`
+Restart ALM systemd service.
+
+**Actions**:
+- Stops all containers
+- Pulls latest images
+- Starts containers based on architecture
+- Shows updated status
+
+#### `alm reset`
+Reset device to allow fresh registration.
+
+**WARNING**: Destructive operation!
+
+**Actions**:
+- Stops all containers
+- Removes containers and volumes
+- Deletes all configuration and registration data
+- Starts fresh init container
+- Waits for init container to be ready
+
+**Use when**:
+- Registration is stuck or incomplete
+- Need to re-register device
+- Want to start from scratch
+
+#### `alm start-main`
+**Workaround** for init container not exiting after registration.
+
+**Actions**:
+- Stops init container
+- Force starts main container (bypasses dependency)
+- Shows service status
+
+**Use when**:
+- Registration complete but init won't exit
+- Main container won't start automatically
+- Stuck after answering 'y' in registration
 
 **Usage Examples**:
 ```bash
-# Interactive registration
-alm register
+# Complete registration flow
+alm register              # Shows QR, waits for user
 
-# Check device status
+# If stuck after registration
+alm start-main           # Force start main container
+
+# Check status anytime
 alm status
 
 # View logs
-alm logs init          # Init container logs
-alm logs main          # Main container logs
+alm logs init            # Init container logs
+alm logs main            # Main container logs
+
+# Reset everything
+alm reset                # Clean slate
 
 # Restart service
-alm restart
+alm restart              # Pull latest images and restart
 
 # Get help
 alm help
@@ -75,6 +142,10 @@ alm register --help
 - **Error handling** - Clear error messages with troubleshooting steps
 - **Multi-architecture** - Auto-detects ARM64/AMD64 containers
 - **Colored output** - Visual feedback with emoji and ANSI colors
+- **Robust IP detection** - Uses `grep -oP 'src \K[0-9.]+'` for reliability
+
+**Known Issue**:
+Init container may not exit automatically after successful registration due to a bug in the alm-init container. Use `alm start-main` as workaround.
 
 **No sensitive data** - Safe for public distribution
 
@@ -297,32 +368,59 @@ Init container ready on port 8080
 
 ### 4️⃣ **Interactive Device Registration** (User Action Required)
 ```
-User SSHs into device → bashrc shows registration banner →
-User runs: alm register →
-Opens displayed QR code/URL in browser →
+User SSHs into device → bashrc auto-starts: alm register →
+Shows QR code/URL →
+User opens URL in browser →
 Completes device registration form →
-Presses Enter in SSH session →
-Main container starts automatically →
+Returns to terminal, confirms with 'y' →
+[If stuck: Ctrl+C, run: alm start-main] →
+Main container starts →
 Service ready on port 80
 ```
 
 **What happens automatically:**
 1. Init container starts and exposes web registration on port 8080
-2. Bashrc detects init container running (shows banner: "Run: alm register")
-3. User runs `alm register` command
-4. CLI waits for registration API to be ready (auto-retry 3x)
-5. Displays QR code + registration URL
-6. Waits for user input (interactive prompt)
-7. Monitors main container startup after registration
-8. Shows success message with service URL
+2. Bashrc detects init container running (auto-runs `alm register`)
+3. CLI waits for registration API to be ready (auto-retry 3x, 2s intervals)
+4. Displays QR code + registration URL
+5. Waits for user to confirm registration complete (y/n prompt)
+6. Monitors init container exit and main container startup (120s timeout)
+7. Shows helpful reminder at 30s if still waiting
+8. Shows success message with service URL when main starts
 
-**User only needs to:**
-- SSH into device
-- Run: `alm register` (suggested by bashrc banner)
-- Open displayed URL in browser
-- Fill registration form
-- Press Enter in SSH session
-- Done! Main service running at http://device-ip:80
+**User workflow:**
+1. **SSH into device** - Bashrc automatically starts registration
+2. **Open URL in browser** - Use displayed QR code or URL
+3. **Fill registration form** - Complete all required fields
+4. **Submit form** - Wait for "Successfully registered" message
+5. **Return to terminal** - Answer 'y' to confirmation prompt
+6. **Wait for startup** - CLI monitors container startup automatically
+7. **Done!** - Service URL displayed when ready
+
+**If registration gets stuck:**
+```bash
+# Press Ctrl+C to cancel waiting
+# Then force start main container
+alm start-main
+
+# Or reset and try again
+alm reset
+```
+
+**Troubleshooting:**
+```bash
+# Check current status
+alm status
+
+# View init container logs
+alm logs init
+
+# View main container logs
+alm logs main
+
+# Reset everything and start fresh
+alm reset
+```
 
 ### 5️⃣ **Ongoing Updates** (Automated)
 ```
@@ -408,12 +506,221 @@ docker run --rm -v "$(pwd):/scripts" koalaman/shellcheck:stable /scripts/system-
 
 ---
 
+## Troubleshooting
+
+### Common Issues and Solutions
+
+#### **Issue: Registration stuck, main container won't start**
+
+**Symptoms:**
+- Completed registration in browser
+- Terminal stuck at "Waiting for main container to start..."
+- Init container still running after 60+ seconds
+
+**Root Cause:**
+Init container bug - doesn't exit after successful registration, blocking main container due to `depends_on: service_completed_successfully` constraint.
+
+**Solution:**
+```bash
+# Press Ctrl+C to cancel waiting
+# Then force start main container
+alm start-main
+```
+
+**Or reset and try again:**
+```bash
+alm reset
+alm register
+# Complete registration
+# If stuck again: alm start-main
+```
+
+---
+
+#### **Issue: "bash: local: can only be used in a function"**
+
+**Symptoms:**
+Error on SSH login before fixes were applied.
+
+**Solution:**
+Already fixed in current version. Variables use regular declarations with `_alm_` prefix and `unset` cleanup.
+
+**If you still see this:**
+```bash
+# On device, update bashrc
+sudo curl -fsSL -o /home/almuser/.bashrc \
+  https://raw.githubusercontent.com/strealer/alm-config/main/system-files/bashrc
+sudo curl -fsSL -o /root/.bashrc \
+  https://raw.githubusercontent.com/strealer/alm-config/main/system-files/bashrc
+```
+
+---
+
+#### **Issue: Container architecture mismatch errors**
+
+**Symptoms:**
+```
+no matching manifest for linux/arm64/v8 in the manifest list entries
+```
+
+**Root Cause:**
+Trying to pull both arm64 and amd64 images on single-architecture device.
+
+**Solution:**
+Already fixed in current `strealer-container.service`. Architecture-aware pulls:
+```bash
+# ARM64 devices pull only arm64
+# AMD64 devices pull only amd64
+```
+
+**If you still see this:**
+```bash
+# Update service file
+sudo curl -fsSL -o /etc/systemd/system/strealer-container.service \
+  https://raw.githubusercontent.com/strealer/alm-config/main/system-files/strealer-container.service
+sudo systemctl daemon-reload
+sudo systemctl restart strealer-container.service
+```
+
+---
+
+#### **Issue: alm command not found**
+
+**Symptoms:**
+```bash
+almuser@device:~$ alm
+-bash: alm: command not found
+```
+
+**Solution:**
+```bash
+# Download and install ALM CLI
+sudo mkdir -p /opt/alm/bin
+sudo curl -fsSL -o /opt/alm/bin/alm \
+  https://raw.githubusercontent.com/strealer/alm-config/main/system-files/alm
+sudo chmod 755 /opt/alm/bin/alm
+
+# Verify PATH includes /opt/alm/bin
+echo $PATH | grep -q /opt/alm/bin || echo 'export PATH="/opt/alm/bin:$PATH"' >> ~/.bashrc
+
+# Reload bashrc
+source ~/.bashrc
+
+# Test
+alm help
+```
+
+---
+
+#### **Issue: Containers keep restarting or failing**
+
+**Symptoms:**
+```bash
+alm status
+# Shows containers in "Restarting" or "Exited" state
+```
+
+**Solution:**
+```bash
+# Check logs for errors
+alm logs init
+alm logs main
+
+# Common fixes:
+
+# 1. Missing configuration (if using old setup)
+alm reset  # Generates fresh configs
+
+# 2. Port conflicts
+sudo netstat -tlnp | grep :80    # Check what's using port 80
+sudo netstat -tlnp | grep :8080  # Check what's using port 8080
+
+# 3. Docker issues
+sudo systemctl restart docker
+alm restart
+
+# 4. Corrupted volumes
+alm reset  # Nuclear option - deletes everything
+```
+
+---
+
+#### **Issue: Can't access service at http://device-ip:80**
+
+**Symptoms:**
+- Main container running (`alm status` shows it)
+- Can't access via browser
+- Connection refused or timeout
+
+**Solution:**
+```bash
+# 1. Verify container is actually running
+alm status
+
+# 2. Check if nginx is listening inside container
+sudo docker exec alm_arm64 curl -s http://localhost:80
+
+# 3. Check firewall
+sudo iptables -L -n | grep 80
+
+# 4. Check container logs for errors
+alm logs main
+
+# 5. Restart container
+sudo docker restart alm_arm64
+```
+
+---
+
+#### **Issue: Old docker-compose.yml without init containers**
+
+**Symptoms:**
+- Device has old single-container setup
+- Missing init container
+- Registration not working
+
+**Solution:**
+```bash
+# Download latest docker-compose.yml from alm repository
+cd /opt/alm
+sudo curl -fsSL -o docker-compose.yml \
+  https://raw.githubusercontent.com/strealer/alm/production/docker-compose.yml
+sudo systemctl restart strealer-container.service
+```
+
+---
+
+### Quick Reference Commands
+
+```bash
+# Registration workflow
+alm register          # Start registration
+alm start-main        # Force start if stuck
+alm reset             # Start completely fresh
+
+# Monitoring
+alm status            # Device and container status
+alm logs init         # Init container logs
+alm logs main         # Main container logs
+
+# Maintenance
+alm restart           # Restart service (pulls latest images)
+alm reset             # Nuclear option - deletes everything
+
+# Help
+alm help              # Show all commands
+alm <command> --help  # Specific command help
+```
+
+---
+
 ## Support
 
 For issues related to:
 - **Configuration files**: Open issue in this repository
 - **Puppet deployment**: See [alm-infra](https://github.com/strealer/alm-infra)
 - **Container application**: See [alm](https://github.com/strealer/alm)
+- **Init container bug**: See [alm](https://github.com/strealer/alm) - Known issue with container not exiting
 - **Pi image building**: See [pi-gen fork](https://github.com/strealer/pi-gen)
 
 ---
