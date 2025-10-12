@@ -244,17 +244,28 @@ EOF
     local elapsed=0
     local check_interval=2
 
+    local init_exited_flag=false
+
     while [[ $elapsed -lt $timeout ]]; do
         # Check if init container has exited (registration complete)
         local init_status
         init_status=$(docker ps -a --filter "name=alm_init_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
 
-        if echo "$init_status" | grep -q "Exited"; then
+        if echo "$init_status" | grep -q "Exited" && [[ "$init_exited_flag" == false ]]; then
+            init_exited_flag=true
             echo ""
             log_success "Init container completed - registration detected!"
             echo ""
-            log_info "Waiting for main container to start..."
-            sleep 3
+            log_info "Starting main container service..."
+
+            # Restart the systemd service to start the main container
+            # The service is Type=oneshot so it stops when init container exits
+            if ! sudo systemctl start strealer-container.service 2>/dev/null; then
+                log_error "Failed to start service"
+                echo "Try manually: sudo systemctl start strealer-container.service"
+            fi
+
+            sleep 5  # Give main container time to start
         fi
 
         # Check if main container is running
