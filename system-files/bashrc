@@ -177,27 +177,83 @@ if [[ -d "/opt/alm/bin" ]] && [[ ":$PATH:" != *":/opt/alm/bin:"* ]]; then
   export PATH="/opt/alm/bin:$PATH"
 fi
 
-# Interactive registration check on login
+# Interactive registration check on login with smart waiting
 # This runs once per shell session to detect if device needs registration
 if [[ $- == *i* ]] && [[ -z "$ALM_REG_CHECK_DONE" ]]; then
   export ALM_REG_CHECK_DONE=1
 
   # Only proceed if ALM CLI is available and Docker is running
   if command -v alm >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
-    # Silently check if init container is running (device needs registration)
     _alm_suffix="arm64"
     [[ "$(uname -m)" == "x86_64" || "$(uname -m)" == "amd64" ]] && _alm_suffix="amd64"
 
     _alm_init_running=$(docker ps --filter "name=alm_init_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
     _alm_main_running=$(docker ps --filter "name=alm_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
 
-    # If init is running but main is not, device needs registration
-    if [[ -n "$_alm_init_running" && -z "$_alm_main_running" ]]; then
-      # Auto-start registration
-      alm register
+    # If main container is running, device is already registered - do nothing
+    if [[ -n "$_alm_main_running" ]]; then
+      unset _alm_suffix _alm_init_running _alm_main_running
+      return
     fi
 
-    # Clean up temporary variables
-    unset _alm_suffix _alm_init_running _alm_main_running
+    # If init container is running, auto-trigger registration
+    if [[ -n "$_alm_init_running" ]]; then
+      alm register
+      unset _alm_suffix _alm_init_running _alm_main_running
+      return
+    fi
+
+    # Init container not running yet - check if service is initializing
+    if systemctl is-active --quiet strealer-container.service 2>/dev/null; then
+      echo ""
+      echo -e "\e[33m╔════════════════════════════════════════════════════════════╗\e[0m"
+      echo -e "\e[33m║\e[0m  \e[1;33mALM System Initializing - Please Wait\e[0m                    \e[33m║\e[0m"
+      echo -e "\e[33m╚════════════════════════════════════════════════════════════╝\e[0m"
+      echo ""
+      echo -e "\e[34mℹ\e[0m The system is pulling Docker images and starting containers."
+      echo -e "\e[34mℹ\e[0m This typically takes 2-5 minutes on first boot."
+      echo ""
+      echo -e "You can monitor progress with: \e[1msudo journalctl -fu strealer-container.service\e[0m"
+      echo ""
+      echo -ne "\e[34mℹ\e[0m Waiting for init container to start"
+
+      # Wait up to 10 minutes for init container (image pull can take time)
+      _wait_count=0
+      _max_wait=120  # 10 minutes (120 * 5 seconds)
+
+      while [[ $_wait_count -lt $_max_wait ]]; do
+        sleep 5
+        echo -n "."
+
+        _alm_init_running=$(docker ps --filter "name=alm_init_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
+
+        if [[ -n "$_alm_init_running" ]]; then
+          echo ""
+          echo ""
+          echo -e "\e[32m✓ Init container ready!\e[0m"
+          echo ""
+          sleep 1
+          alm register
+          unset _alm_suffix _alm_init_running _alm_main_running _wait_count _max_wait
+          return
+        fi
+
+        ((_wait_count++))
+      done
+
+      # Timeout reached
+      echo ""
+      echo ""
+      echo -e "\e[31m✗ Timeout waiting for init container\e[0m"
+      echo ""
+      echo "Troubleshooting steps:"
+      echo "  1. Check service status: sudo systemctl status strealer-container.service"
+      echo "  2. Check logs: sudo journalctl -u strealer-container.service"
+      echo "  3. Restart service: sudo systemctl restart strealer-container.service"
+      echo ""
+    fi
+
+    # Clean up
+    unset _alm_suffix _alm_init_running _alm_main_running _wait_count _max_wait
   fi
 fi
