@@ -247,7 +247,9 @@ EOF
     # Check backend API directly to verify registration
     log_info "Checking registration status with backend..."
     local backend_check
-    backend_check=$(curl -s --max-time 5 "http://public-staging.strealer.io/alm/auth-key-check?ak=${auth_key}&type=registered" 2>/dev/null || echo "0")
+    backend_check=$(curl -s --max-time 5 \
+        -H "x-api-key: cwSL8sAAiT7QWyvMulL4f6Mtmet7klzV" \
+        "http://public-staging.strealer.io/alm/auth-key-check?ak=${auth_key}&type=registered" 2>/dev/null || echo "0")
 
     if [[ "$backend_check" != "1" ]]; then
         log_error "Registration not completed on backend"
