@@ -16,6 +16,8 @@ alm-config/
     ├── alm                                 # CLI tool for device management (register, status, logs, restart)
     ├── bashrc                              # Shell environment for almuser and root
     ├── configure_puppet_agent.service      # Systemd service for first-boot Puppet registration
+    ├── configure_puppet_agent.sh           # Puppet bootstrap script (hardware detection, hostname generation)
+    ├── puppet.conf                         # Puppet agent configuration template
     └── strealer-container.service          # Systemd service for multi-container ALM lifecycle
 ```
 
@@ -199,16 +201,77 @@ almuser@device:~$ alm register
 
 ---
 
+### `system-files/configure_puppet_agent.sh`
+
+Puppet bootstrap script that configures edge devices for automatic infrastructure management.
+
+**Deployed to**: `/opt/configure_puppet_agent.sh`
+
+**What it does**:
+1. **Installs Puppet 8** - Downloads and installs from official Puppet repositories (if not present)
+2. **Generates unique hostname** - Hardware-based detection (CPU serial, system UUID, vendor info)
+3. **Configures Puppet agent** - Downloads `puppet.conf` template and customizes with hostname
+4. **Enables Puppet service** - Connects to `puppet.strealer.io` for continuous configuration management
+
+**Hostname patterns generated**:
+- **Raspberry Pi**: `rpi4-12345678-20240115143022`, `rpi5-abcdef12-20240115143022`
+- **AMD64 Servers**: `amd-dell-optiplex-9a8b7c6d-20240115143022`, `amd-hp-elitedesk-1f2e3d4c-20240115143022`
+- **Development/Generic**: `dev-4f5e6d7c-20240115143022`
+
+**Safety checks**:
+- Disk space validation (requires >20GB total)
+- Prevents re-running via flag file (`/var/lib/puppet-config-done`)
+- Certificate cleanup on SSL errors
+- Root-only execution
+
+**Usage**:
+```bash
+# Download and execute
+curl -fsSL https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh | bash
+
+# Or save first
+curl -fsSL -o configure_puppet_agent.sh \
+  https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh
+bash configure_puppet_agent.sh
+```
+
+**No sensitive data** - Safe for public distribution (removed hardcoded GitHub PAT in favor of public downloads)
+
+---
+
+### `system-files/puppet.conf`
+
+Puppet agent configuration template used by `configure_puppet_agent.sh`.
+
+**Deployed to**: `/etc/puppetlabs/puppet/puppet.conf`
+
+**Configuration**:
+- **Puppet Master**: `puppet.strealer.io`
+- **Certname**: Dynamically set via `%%HOSTNAME%%` placeholder
+- **Run Interval**: 120 seconds (2 minutes) - frequent updates for edge devices
+- **Environment**: Production
+- **Wait for cert**: 60 seconds
+
+**Template processing**:
+```bash
+# Script replaces %%HOSTNAME%% with generated hostname
+sed "s/%%HOSTNAME%%/$HOSTNAME/g" puppet.conf.template > /etc/puppetlabs/puppet/puppet.conf
+```
+
+**No sensitive data** - Contains only Puppet server hostname and timing configuration
+
+---
+
 ### `system-files/configure_puppet_agent.service`
 
 Systemd service that runs Puppet bootstrap script on first device boot.
 
 **Key behaviors**:
-- Executes `/opt/configure_puppet_agent.sh` (downloaded separately from private repo)
+- Executes `/opt/configure_puppet_agent.sh` (downloaded from public alm-config repo)
 - Generates hardware-based hostname (`rpi4-12345678-timestamp`)
 - Connects to `puppet.strealer.io` for automatic configuration
 - Runs continuously with 30-second restart intervals until successful
-- Auto-disables after successful Puppet registration
+- Auto-disables after successful Puppet registration (via flag file)
 
 **Network dependency**: Requires `network-online.target`
 
