@@ -34,6 +34,17 @@ log_error() {
     echo -e "${RED}❌${NC} $*" >&2
 }
 
+# Docker command wrapper - automatically uses sudo if needed
+# Detects if current user has Docker access, uses sudo if not
+docker_cmd() {
+    # Test if docker works without sudo
+    if docker ps >/dev/null 2>&1; then
+        docker "$@"
+    else
+        sudo docker "$@"
+    fi
+}
+
 # Check if running in container
 is_in_container() {
     [[ -f /.dockerenv ]] || grep -q docker /proc/1/cgroup 2>/dev/null
@@ -117,7 +128,7 @@ EOF
 
     # Check if init container is running
     local init_running
-    init_running=$(docker ps --filter "name=alm_init_${suffix}" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
+    init_running=$(docker_cmd ps --filter "name=alm_init_${suffix}" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
 
     if [[ -z "$init_running" ]]; then
         log_warning "Init container is not running."
@@ -133,7 +144,7 @@ EOF
 
     # Check if main container is already running
     local main_running
-    main_running=$(docker ps --filter "name=alm_${suffix}" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
+    main_running=$(docker_cmd ps --filter "name=alm_${suffix}" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
 
     if [[ -n "$main_running" ]]; then
         log_success "Device is already registered! Main container is running."
@@ -236,7 +247,7 @@ EOF
 
     # Get authKey from init container to check backend
     local auth_key=""
-    auth_key=$(docker exec "alm_init_${suffix}" cat /opt/alm/persist/alm_keys.json 2>/dev/null | grep -o '"authKey":"[^"]*"' | cut -d'"' -f4 || true)
+    auth_key=$(docker_cmd exec "alm_init_${suffix}" cat /opt/alm/persist/alm_keys.json 2>/dev/null | grep -o '"authKey":"[^"]*"' | cut -d'"' -f4 || true)
 
     if [[ -z "$auth_key" ]]; then
         log_error "Could not read authKey from init container"
@@ -271,7 +282,7 @@ EOF
 
     # Check if init container has already exited
     local init_status
-    init_status=$(docker ps -a --filter "name=alm_init_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
+    init_status=$(docker_cmd ps -a --filter "name=alm_init_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
 
     if echo "$init_status" | grep -q "Up"; then
         log_info "Init container still running - stopping it to proceed with main container..."
@@ -307,7 +318,7 @@ EOF
     while [[ $elapsed -lt $timeout ]]; do
 
         # Check if main container is running
-        main_running=$(docker ps --filter "name=alm_${suffix}" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
+        main_running=$(docker_cmd ps --filter "name=alm_${suffix}" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
 
         if [[ -n "$main_running" ]]; then
             echo ""
@@ -420,7 +431,7 @@ EOF
 
     # Check init container
     local init_status
-    init_status=$(docker ps -a --filter "name=alm_init_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
+    init_status=$(docker_cmd ps -a --filter "name=alm_init_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
 
     if [[ -n "$init_status" ]]; then
         if echo "$init_status" | grep -q "Up"; then
@@ -435,7 +446,7 @@ EOF
 
     # Check main container
     local main_status
-    main_status=$(docker ps -a --filter "name=alm_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
+    main_status=$(docker_cmd ps -a --filter "name=alm_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
 
     if [[ -n "$main_status" ]]; then
         if echo "$main_status" | grep -q "Up"; then
@@ -519,11 +530,11 @@ EOF
     fi
 
     # Check if container exists
-    if ! docker ps -a --filter "name=^${container_name}$" --format "{{.Names}}" 2>/dev/null | grep -q "^${container_name}$"; then
+    if ! docker_cmd ps -a --filter "name=^${container_name}$" --format "{{.Names}}" 2>/dev/null | grep -q "^${container_name}$"; then
         log_error "Container '$container_name' not found"
         echo ""
         echo "Available containers:"
-        docker ps -a --filter "name=alm" --format "  • {{.Names}} ({{.Status}})"
+        docker_cmd ps -a --filter "name=alm" --format "  • {{.Names}} ({{.Status}})"
         return 1
     fi
 
@@ -531,9 +542,9 @@ EOF
     echo ""
 
     if [[ "$follow" == true ]]; then
-        docker logs -f --tail "$tail_lines" "$container_name"
+        docker_cmd logs -f --tail "$tail_lines" "$container_name"
     else
-        docker logs --tail "$tail_lines" "$container_name"
+        docker_cmd logs --tail "$tail_lines" "$container_name"
     fi
 }
 
@@ -778,7 +789,7 @@ EOF
     sleep 5
 
     # Check if running
-    if docker ps --filter "name=alm_${suffix}" --filter "status=running" -q | grep -q .; then
+    if docker_cmd ps --filter "name=alm_${suffix}" --filter "status=running" -q | grep -q .; then
         echo ""
         log_success "Main container is running!"
         echo ""

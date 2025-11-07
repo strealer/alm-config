@@ -182,13 +182,22 @@ fi
 if [[ $- == *i* ]] && [[ -z "$ALM_REG_CHECK_DONE" ]]; then
   export ALM_REG_CHECK_DONE=1
 
+  # Helper function to run docker with sudo if needed
+  _alm_docker() {
+    if docker ps >/dev/null 2>&1; then
+      docker "$@"
+    else
+      sudo docker "$@"
+    fi
+  }
+
   # Only proceed if ALM CLI is available and Docker is running
   if command -v alm >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
     _alm_suffix="arm64"
     [[ "$(uname -m)" == "x86_64" || "$(uname -m)" == "amd64" ]] && _alm_suffix="amd64"
 
-    _alm_init_running=$(docker ps --filter "name=alm_init_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
-    _alm_main_running=$(docker ps --filter "name=alm_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
+    _alm_init_running=$(_alm_docker ps --filter "name=alm_init_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
+    _alm_main_running=$(_alm_docker ps --filter "name=alm_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
 
     # If main container is running, device is already registered - do nothing
     if [[ -n "$_alm_main_running" ]]; then
@@ -225,7 +234,7 @@ if [[ $- == *i* ]] && [[ -z "$ALM_REG_CHECK_DONE" ]]; then
         sleep 5
         echo -n "."
 
-        _alm_init_running=$(docker ps --filter "name=alm_init_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
+        _alm_init_running=$(_alm_docker ps --filter "name=alm_init_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
 
         if [[ -n "$_alm_init_running" ]]; then
           echo ""
@@ -254,6 +263,6 @@ if [[ $- == *i* ]] && [[ -z "$ALM_REG_CHECK_DONE" ]]; then
     fi
 
     # Clean up
-    unset _alm_suffix _alm_init_running _alm_main_running _wait_count _max_wait
+    unset _alm_suffix _alm_init_running _alm_main_running _wait_count _max_wait _alm_docker
   fi
 fi
