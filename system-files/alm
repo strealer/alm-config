@@ -34,15 +34,10 @@ log_error() {
     echo -e "${RED}❌${NC} $*" >&2
 }
 
-# Docker command wrapper - automatically uses sudo if needed
-# Detects if current user has Docker access, uses sudo if not
-docker_cmd() {
-    # Test if docker works without sudo
-    if docker ps >/dev/null 2>&1; then
-        docker "$@"
-    else
-        sudo docker "$@"
-    fi
+# Check if container is running via HTTP health check (no docker access needed)
+is_container_healthy() {
+    local port=$1
+    curl -sf --max-time 1 "http://localhost:${port}" >/dev/null 2>&1
 }
 
 # Check if running in container
@@ -123,34 +118,25 @@ EOF
         esac
     done
 
-    local suffix
-    suffix=$(get_container_suffix)
-
-    # Check if init container is running
-    local init_running
-    init_running=$(docker_cmd ps --filter "name=alm_init_${suffix}" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
-
-    if [[ -z "$init_running" ]]; then
-        log_warning "Init container is not running."
-        echo ""
-        echo "This usually means:"
-        echo "  • Device is already registered (main container running)"
-        echo "  • Docker service is not running"
-        echo "  • Containers haven't been started yet"
-        echo ""
-        echo "Try: alm status"
-        return 1
-    fi
-
-    # Check if main container is already running
-    local main_running
-    main_running=$(docker_cmd ps --filter "name=alm_${suffix}" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
-
-    if [[ -n "$main_running" ]]; then
+    # Check if main container is already running (port 80)
+    if is_container_healthy 80; then
         log_success "Device is already registered! Main container is running."
         echo ""
         echo "Service URL: http://$(get_device_ip):80"
         return 0
+    fi
+
+    # Check if init container is running (port 8080)
+    if ! is_container_healthy 8080; then
+        log_warning "Init container is not running."
+        echo ""
+        echo "This usually means:"
+        echo "  • Device is already registered (main container running)"
+        echo "  • Service hasn't started yet"
+        echo "  • Containers are still initializing"
+        echo ""
+        echo "Try: alm status"
+        return 1
     fi
 
     log_info "Init container detected, preparing registration..."
@@ -245,11 +231,20 @@ EOF
     log_info "Verifying registration completion..."
     echo ""
 
-    # Get authKey from init container to check backend
-    local auth_key=""
-    auth_key=$(docker_cmd exec "alm_init_${suffix}" cat /opt/alm/persist/alm_keys.json 2>/dev/null | grep -o '"authKey":"[^"]*"' | cut -d'"' -f4 || true)
+    # Get device suffix for container name
+    local suffix
+    suffix=$(get_container_suffix)
 
-    if [[ -z "$auth_key" ]]; then
+    # Try to get authKey from init container via API endpoint
+    local auth_key=""
+    auth_key=$(curl -sf --max-time 2 http://localhost:8080/api/auth-key 2>/dev/null | jq -r '.authKey' 2>/dev/null || true)
+
+    # Fallback: try docker exec if API doesn't have endpoint (requires docker/sudo)
+    if [[ -z "$auth_key" || "$auth_key" == "null" ]]; then
+        auth_key=$(sudo docker exec "alm_init_${suffix}" cat /opt/alm/persist/alm_keys.json 2>/dev/null | grep -o '"authKey":"[^"]*"' | cut -d'"' -f4 || true)
+    fi
+
+    if [[ -z "$auth_key" || "$auth_key" == "null" ]]; then
         log_error "Could not read authKey from init container"
         echo "The container may not be ready yet. Try again in a few seconds."
         return 1
@@ -280,17 +275,11 @@ EOF
     log_success "Registration confirmed on backend!"
     echo ""
 
-    # Check if init container has already exited
-    local init_status
-    init_status=$(docker_cmd ps -a --filter "name=alm_init_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
-
-    if echo "$init_status" | grep -q "Up"; then
-        log_info "Init container still running - stopping it to proceed with main container..."
-
-        # Force stop init container since registration is confirmed
+    # Stop init container if still running (gracefully try with docker)
+    if is_container_healthy 8080; then
+        log_info "Init container still running - stopping it..."
         sudo docker stop "alm_init_${suffix}" 2>/dev/null || true
         sleep 2
-
         log_success "Init container stopped"
     fi
 
@@ -310,17 +299,15 @@ EOF
         return 1
     fi
 
-    # Monitor main container startup with timeout
+    # Monitor main container startup with timeout (check via HTTP)
     local timeout=60  # 1 minute should be enough
     local elapsed=0
     local check_interval=2
 
+    echo -n "Waiting for main container"
     while [[ $elapsed -lt $timeout ]]; do
-
-        # Check if main container is running
-        main_running=$(docker_cmd ps --filter "name=alm_${suffix}" --filter "status=running" --format "{{.Names}}" 2>/dev/null || true)
-
-        if [[ -n "$main_running" ]]; then
+        # Check if main container is responding on port 80
+        if is_container_healthy 80; then
             echo ""
             log_success "Main container is running!"
             echo ""
@@ -329,25 +316,18 @@ EOF
             return 0
         fi
 
+        echo -n "."
         sleep $check_interval
         elapsed=$((elapsed + check_interval))
-
-        # Progress indicator every 10 seconds
-        if (( elapsed % 10 == 0 )); then
-            echo -n "."
-        fi
 
         # Show helpful message at 30 seconds
         if [[ $elapsed -eq 30 ]]; then
             echo ""
             echo ""
-            log_warning "Still waiting... Make sure you completed the registration form!"
-            echo "Registration URL: $(curl -sf http://localhost:8080/api/register-link 2>/dev/null | jq -r '.registration_url' || echo 'check above')"
+            log_warning "Still waiting for main container to start..."
+            echo "You can check logs in another terminal: sudo docker logs alm_${suffix}"
             echo ""
-            echo "If you've completed registration but it's stuck, you can:"
-            echo "  1. Press Ctrl+C to cancel this"
-            echo "  2. Run: alm start-main"
-            echo ""
+            echo -n "Continuing to wait"
         fi
     done
 
@@ -356,18 +336,8 @@ EOF
     echo ""
     log_error "Timeout: Main container didn't start within ${timeout} seconds"
     echo ""
-    echo "Possible reasons:"
-    echo "  • Registration form not submitted in browser"
-    echo "  • Init container stuck or failed"
-    echo "  • Network or API issues"
-    echo ""
-    echo "Check status:"
-    echo "  alm status"
-    echo "  alm logs init"
-    echo ""
-    echo "Or reset and try again:"
-    echo "  alm reset"
-
+    echo "Check status: alm status"
+    echo "Check logs: sudo docker logs alm_${suffix}"
     return 1
 }
 
@@ -429,37 +399,24 @@ EOF
 
     echo -e "${BLUE}Container Status:${NC}"
 
-    # Check init container
-    local init_status
-    init_status=$(docker_cmd ps -a --filter "name=alm_init_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
-
-    if [[ -n "$init_status" ]]; then
-        if echo "$init_status" | grep -q "Up"; then
-            log_success "Init container: Running"
-            echo "    Port 8080: Registration web interface"
-        else
-            log_info "Init container: $init_status"
-        fi
+    # Check init container (via HTTP on port 8080)
+    if is_container_healthy 8080; then
+        log_success "Init container: Running"
+        echo "    Port 8080: Registration web interface"
+        echo "    Run: alm register"
     else
-        log_warning "Init container: Not found"
+        log_info "Init container: Not running"
     fi
 
-    # Check main container
-    local main_status
-    main_status=$(docker_cmd ps -a --filter "name=alm_${suffix}" --format "{{.Status}}" 2>/dev/null | head -1 || true)
-
-    if [[ -n "$main_status" ]]; then
-        if echo "$main_status" | grep -q "Up"; then
-            log_success "Main container: Running"
-            echo "    Port 80: Application service"
-            echo ""
-            echo -e "${GREEN}Service URL:${NC} http://$ip:80"
-        else
-            log_info "Main container: $main_status"
-        fi
+    # Check main container (via HTTP on port 80)
+    if is_container_healthy 80; then
+        log_success "Main container: Running"
+        echo "    Port 80: Application service"
+        echo ""
+        echo -e "${GREEN}Service URL:${NC} http://$ip:80"
     else
-        log_warning "Main container: Not found (device may need registration)"
-        echo "    Run: alm register"
+        log_warning "Main container: Not running"
+        echo "    Device may need registration: alm register"
     fi
 
     echo ""
@@ -529,22 +486,20 @@ EOF
         container_name="alm_${suffix}"
     fi
 
-    # Check if container exists
-    if ! docker_cmd ps -a --filter "name=^${container_name}$" --format "{{.Names}}" 2>/dev/null | grep -q "^${container_name}$"; then
-        log_error "Container '$container_name' not found"
-        echo ""
-        echo "Available containers:"
-        docker_cmd ps -a --filter "name=alm" --format "  • {{.Names}} ({{.Status}})"
-        return 1
-    fi
-
+    # Show logs using sudo docker (handle gracefully if fails)
     log_info "Showing logs for: $container_name"
     echo ""
 
     if [[ "$follow" == true ]]; then
-        docker_cmd logs -f --tail "$tail_lines" "$container_name"
+        sudo docker logs -f --tail "$tail_lines" "$container_name" 2>/dev/null || {
+            log_error "Could not access container logs (requires sudo/docker access)"
+            return 1
+        }
     else
-        docker_cmd logs --tail "$tail_lines" "$container_name"
+        sudo docker logs --tail "$tail_lines" "$container_name" 2>/dev/null || {
+            log_error "Could not access container logs (requires sudo/docker access)"
+            return 1
+        }
     fi
 }
 
@@ -786,23 +741,29 @@ EOF
 
     echo ""
     log_info "Waiting for main container to be ready..."
-    sleep 5
+    
+    # Wait for container to respond on port 80
+    local wait_time=0
+    local max_wait=30
+    while [[ $wait_time -lt $max_wait ]]; do
+        if is_container_healthy 80; then
+            echo ""
+            log_success "Main container is running!"
+            echo ""
+            echo -e "${GREEN}Service URL:${NC} http://$(get_device_ip):80"
+            echo ""
+            return 0
+        fi
+        sleep 2
+        wait_time=$((wait_time + 2))
+        echo -n "."
+    done
 
-    # Check if running
-    if docker_cmd ps --filter "name=alm_${suffix}" --filter "status=running" -q | grep -q .; then
-        echo ""
-        log_success "Main container is running!"
-        echo ""
-        echo -e "${GREEN}Service URL:${NC} http://$(get_device_ip):80"
-        echo ""
-        return 0
-    else
-        echo ""
-        log_error "Main container failed to start"
-        echo ""
-        echo "Check logs with: alm logs main"
-        return 1
-    fi
+    echo ""
+    echo ""
+    log_error "Main container failed to start within ${max_wait} seconds"
+    echo "Check logs with: sudo docker logs alm_${suffix}"
+    return 1
 }
 
 #

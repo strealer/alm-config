@@ -76,193 +76,38 @@ fi
 # 1. Paths
 export PATH="$HOME/.local/bin:/opt/alm/bin:$PATH"
 
-# 2. Robust, timestamped, cross‑session history
+# 2. Better history
 export HISTSIZE=5000
 export HISTFILESIZE=10000
 export HISTTIMEFORMAT="%F %T "
-__alm_history_sync() { builtin history -a; builtin history -c; builtin history -r; }
-PROMPT_COMMAND="__alm_history_sync${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 
-# 3. Safer core utilities
-alias cp='cp -iv'
-alias mv='mv -iv'
-alias rm='rm -Iv --one-file-system'
-alias chown='chown --preserve-root'
-alias chmod='chmod --preserve-root'
-
-# 4. Listing helpers
-alias ll='ls -alFh --group-directories-first --color=auto'
+# 3. Essential aliases
+alias ll='ls -alFh --color=auto'
 alias la='ls -A'
-alias l='ls -CF'
-alias tree='tree -C'
-
-# 5. Navigation shortcuts
 alias ..='cd ..'
 alias ...='cd ../..'
-up()   { local n=${1:-1}; while ((n--)); do cd ..; done; }
-mkcd() { mkdir -p -- "$1" && cd -- "$1"; }
 
-# 6. Smart archive extractor
-extract() {
-  local f=$1; [[ -f $f ]] || { echo "$f: not found"; return 1; }
-  case $f in
-    *.tar.bz2)   tar xjf "$f" ;;
-    *.tar.gz)    tar xzf "$f" ;;
-    *.tar.xz)    tar xJf "$f" ;;
-    *.bz2)       bunzip2  "$f" ;;
-    *.rar)       unrar x  "$f" ;;
-    *.gz)        gunzip   "$f" ;;
-    *.tar)       tar xf   "$f" ;;
-    *.tbz2)      tar xjf  "$f" ;;
-    *.tgz)       tar xzf  "$f" ;;
-    *.zip)       unzip    "$f" ;;
-    *.7z)        7z x     "$f" ;;
-    *)           echo "$f: unsupported"; return 2 ;;
-  esac
-}
-
-# 7. Convenience helpers
-please() { sudo "$(history -p '!!')"; }
-timer()  { local s=$(date +%s); "$@"; printf '\n⏱  %s s elapsed\n' $(( $(date +%s) - s )); }
-
-# 8. Raspberry‑Pi telemetry
-alias rpi-temp='printf "CPU: %.1f °C\n" "$(awk "{print \$1/1000}" /sys/class/thermal/thermal_zone0/temp)"'
-alias rpi-power='vcgencmd get_throttled'
-alias rpi-watch='watch -n 2 "vcgencmd measure_temp; vcgencmd get_throttled"'
-
-# 9. Network shortcuts
+# 4. Raspberry Pi shortcuts
 alias myip='hostname -I | awk "{print \$1}"'
-alias ports='ss -tuln'
-
-# 10. Git branch/status in prompt
-if command -v __git_ps1 >/dev/null 2>&1; then
-  GIT_PS1_SHOWDIRTYSTATE=1
-  GIT_PS1_SHOWSTASHSTATE=1
-  GIT_PS1_SHOWUNTRACKEDFILES=1
-  GIT_PS1_SHOWUPSTREAM="auto"
-  PS1='${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w$(__git_ps1 " (%s)") \$\[\033[00m\] '
-fi
-
-# 11. Coloured man pages
-man() {
-  env LESS_TERMCAP_mb=$'\e[1;31m' \
-      LESS_TERMCAP_md=$'\e[1;31m' \
-      LESS_TERMCAP_me=$'\e[0m'  \
-      LESS_TERMCAP_se=$'\e[0m'  \
-      LESS_TERMCAP_so=$'\e[1;44;33m' \
-      LESS_TERMCAP_ue=$'\e[0m'  \
-      LESS_TERMCAP_us=$'\e[1;32m' \
-      command man "$@"
-}
-
-# 12. Modular per‑user snippets
-if [[ -d $HOME/.bashrc.d ]]; then
-  for rc in "$HOME"/.bashrc.d/*.bash; do
-    [[ -r $rc ]] && source "$rc"
-  done
-fi
-
-# 13. Less intrusive bell
-set bell-style visible
+alias rpi-temp='printf "CPU: %.1f °C\n" "$(awk "{print \$1/1000}" /sys/class/thermal/thermal_zone0/temp)"'
 
 ###############################################################################
-# ALM - Autonomous Local Manager Integration
+# ALM Auto-Registration (runs once per shell session)
 ###############################################################################
-
-# The ALM CLI is provided as a standalone script at /opt/alm/bin/alm
-# This section integrates it with the shell environment
-
-# Ensure ALM bin directory is in PATH (already added above, but verify)
-if [[ -d "/opt/alm/bin" ]] && [[ ":$PATH:" != *":/opt/alm/bin:"* ]]; then
-  export PATH="/opt/alm/bin:$PATH"
-fi
-
-# Interactive registration check on login with smart waiting
-# This runs once per shell session to detect if device needs registration
-if [[ $- == *i* ]] && [[ -z "$ALM_REG_CHECK_DONE" ]]; then
+if [[ -z "$ALM_REG_CHECK_DONE" ]] && command -v alm >/dev/null 2>&1; then
   export ALM_REG_CHECK_DONE=1
 
-  # Helper function to run docker with sudo if needed
-  _alm_docker() {
-    if docker ps >/dev/null 2>&1; then
-      docker "$@"
-    else
-      sudo docker "$@"
-    fi
-  }
+  # Main container running (port 80) = already registered, skip
+  curl -sf --max-time 1 http://localhost:80 >/dev/null 2>&1 && return
 
-  # Only proceed if ALM CLI is available and Docker is running
-  if command -v alm >/dev/null 2>&1 && command -v docker >/dev/null 2>&1; then
-    _alm_suffix="arm64"
-    [[ "$(uname -m)" == "x86_64" || "$(uname -m)" == "amd64" ]] && _alm_suffix="amd64"
+  # Init container ready (port 8080) = trigger registration
+  if curl -sf --max-time 1 http://localhost:8080 >/dev/null 2>&1; then
+    alm register
+    return
+  fi
 
-    _alm_init_running=$(_alm_docker ps --filter "name=alm_init_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
-    _alm_main_running=$(_alm_docker ps --filter "name=alm_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
-
-    # If main container is running, device is already registered - do nothing
-    if [[ -n "$_alm_main_running" ]]; then
-      unset _alm_suffix _alm_init_running _alm_main_running
-      return
-    fi
-
-    # If init container is running, auto-trigger registration
-    if [[ -n "$_alm_init_running" ]]; then
-      alm register
-      unset _alm_suffix _alm_init_running _alm_main_running
-      return
-    fi
-
-    # Init container not running yet - check if service is initializing
-    if systemctl is-active --quiet strealer-container.service 2>/dev/null; then
-      echo ""
-      echo -e "\e[33m╔════════════════════════════════════════════════════════════╗\e[0m"
-      echo -e "\e[33m║\e[0m  \e[1;33mALM System Initializing - Please Wait\e[0m                    \e[33m║\e[0m"
-      echo -e "\e[33m╚════════════════════════════════════════════════════════════╝\e[0m"
-      echo ""
-      echo -e "\e[34mℹ\e[0m The system is pulling Docker images and starting containers."
-      echo -e "\e[34mℹ\e[0m This typically takes 2-5 minutes on first boot."
-      echo ""
-      echo -e "You can monitor progress with: \e[1msudo journalctl -fu strealer-container.service\e[0m"
-      echo ""
-      echo -ne "\e[34mℹ\e[0m Waiting for init container to start"
-
-      # Wait up to 10 minutes for init container (image pull can take time)
-      _wait_count=0
-      _max_wait=120  # 10 minutes (120 * 5 seconds)
-
-      while [[ $_wait_count -lt $_max_wait ]]; do
-        sleep 5
-        echo -n "."
-
-        _alm_init_running=$(_alm_docker ps --filter "name=alm_init_${_alm_suffix}" --filter "status=running" -q 2>/dev/null)
-
-        if [[ -n "$_alm_init_running" ]]; then
-          echo ""
-          echo ""
-          echo -e "\e[32m✓ Init container ready!\e[0m"
-          echo ""
-          sleep 1
-          alm register
-          unset _alm_suffix _alm_init_running _alm_main_running _wait_count _max_wait
-          return
-        fi
-
-        ((_wait_count++))
-      done
-
-      # Timeout reached
-      echo ""
-      echo ""
-      echo -e "\e[31m✗ Timeout waiting for init container\e[0m"
-      echo ""
-      echo "Troubleshooting steps:"
-      echo "  1. Check service status: sudo systemctl status strealer-container.service"
-      echo "  2. Check logs: sudo journalctl -u strealer-container.service"
-      echo "  3. Restart service: sudo systemctl restart strealer-container.service"
-      echo ""
-    fi
-
-    # Clean up
-    unset _alm_suffix _alm_init_running _alm_main_running _wait_count _max_wait _alm_docker
+  # Service starting but containers not ready yet
+  if systemctl is-active --quiet strealer-container.service 2>/dev/null; then
+    echo -e "\n\e[33m⚡ ALM initializing (2-5 min) - Run \e[1malm status\e[0m\e[33m to check\e[0m\n"
   fi
 fi
