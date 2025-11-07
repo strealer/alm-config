@@ -274,44 +274,36 @@ EOF
 
     log_success "Registration confirmed on backend!"
     echo ""
-
-    # Stop init container if still running (gracefully try with docker)
-    if is_container_healthy 8080; then
-        log_info "Init container still running - stopping it..."
-        sudo docker stop "alm_init_${suffix}" 2>/dev/null || true
-        sleep 2
-        log_success "Init container stopped"
-    fi
-
+    echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║${NC}  ${GREEN}✅ Registration Complete!${NC}                                ${GREEN}║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    log_info "Starting main container..."
+    echo "The strealer-container service will automatically:"
+    echo "  1. Detect registration is complete"
+    echo "  2. Stop the init container"
+    echo "  3. Start the main application container"
     echo ""
-
-    # Start main container via docker compose
-    cd /opt/alm || { log_error "Could not change to /opt/alm directory"; return 1; }
-
-    if ! sudo docker compose up -d "alm_${suffix}"; then
-        log_error "Failed to start main container"
-        echo ""
-        echo "Try manually:"
-        echo "  cd /opt/alm"
-        echo "  sudo docker compose up -d alm_${suffix}"
-        return 1
-    fi
+    echo "This usually takes 10-30 seconds."
+    echo ""
+    log_info "Waiting for main container to start..."
+    echo ""
 
     # Monitor main container startup with timeout (check via HTTP)
-    local timeout=60  # 1 minute should be enough
+    local timeout=90  # 1.5 minutes for service to react
     local elapsed=0
-    local check_interval=2
+    local check_interval=3
 
-    echo -n "Waiting for main container"
+    echo -n "Checking"
     while [[ $elapsed -lt $timeout ]]; do
         # Check if main container is responding on port 80
         if is_container_healthy 80; then
             echo ""
+            echo ""
             log_success "Main container is running!"
             echo ""
             echo -e "${GREEN}Service URL:${NC} http://$(get_device_ip):80"
+            echo ""
+            echo "You can now access your device via the web interface."
             echo ""
             return 0
         fi
@@ -320,25 +312,33 @@ EOF
         sleep $check_interval
         elapsed=$((elapsed + check_interval))
 
-        # Show helpful message at 30 seconds
-        if [[ $elapsed -eq 30 ]]; then
+        # Show helpful message at 45 seconds
+        if [[ $elapsed -eq 45 ]]; then
             echo ""
             echo ""
-            log_warning "Still waiting for main container to start..."
-            echo "You can check logs in another terminal: sudo docker logs alm_${suffix}"
+            log_info "Service is transitioning containers..."
+            echo "Run 'alm status' in another terminal to check progress"
             echo ""
-            echo -n "Continuing to wait"
+            echo -n "Still waiting"
         fi
     done
 
     # Timeout reached
     echo ""
     echo ""
-    log_error "Timeout: Main container didn't start within ${timeout} seconds"
+    log_warning "Main container hasn't started yet after ${timeout} seconds"
     echo ""
-    echo "Check status: alm status"
-    echo "Check logs: sudo docker logs alm_${suffix}"
-    return 1
+    echo "This can happen if:"
+    echo "  • Service is still pulling the container image (first boot)"
+    echo "  • Network is slow"
+    echo "  • Container is still initializing"
+    echo ""
+    echo "What to do:"
+    echo "  1. Wait a few more minutes for image pull to complete"
+    echo "  2. Check status: alm status"
+    echo "  3. Check logs: journalctl -fu strealer-container.service"
+    echo ""
+    return 0
 }
 
 #
