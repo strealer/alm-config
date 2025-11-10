@@ -7,6 +7,8 @@ Requires=docker.service
 Type=oneshot
 User=root
 WorkingDirectory=/opt/alm
+# Authenticate to GCP Artifact Registry (Puppet-distributed token)
+ExecStartPre=/bin/bash /usr/local/bin/docker-login-gcp
 # Pull init container FIRST (faster startup for user registration)
 ExecStartPre=/bin/bash -c 'ARCH=$(uname -m); if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then docker compose pull alm_init_arm64; else docker compose pull alm_init_amd64; fi'
 # Start init container (users can register while main app pulls)
