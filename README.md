@@ -73,13 +73,14 @@ Follow container logs in real-time.
 - `--tail N` - Show last N lines (default: 50)
 
 #### `alm restart`
-Restart ALM systemd service.
+Restart ALM systemd service using locally cached images.
 
 **Actions**:
 - Stops all containers
-- Pulls latest images
-- Starts containers based on architecture
+- Starts containers based on architecture (using cached images)
 - Shows updated status
+
+**Note**: Image updates are handled by Puppet (every 30 min), not by this command
 
 #### `alm reset`
 Reset device to allow fresh registration.
@@ -283,9 +284,13 @@ Systemd service managing containerized ALM application lifecycle.
 
 **Key features**:
 - **Architecture detection** - Automatically selects ARM64 or AMD64 container variant
-- **Auto-update mechanism** - Pulls latest images before starting (`docker compose pull`)
+- **Uses locally cached images** - No network dependency for startup (`alm reset` works offline)
 - **Multi-container orchestration** - Manages init → main container dependency flow
 - **Graceful lifecycle** - Proper start/stop/restart handling
+
+**Architecture separation**:
+- **Puppet**: Handles Docker authentication and image updates (every 30 min)
+- **Systemd service**: Uses locally available images only (instant startup)
 
 **Container selection logic**:
 ```bash
@@ -297,6 +302,11 @@ fi
 ```
 
 **Working directory**: `/opt/alm` (contains `docker-compose.yml`)
+
+**Benefits**:
+- `alm reset` works immediately without network/authentication
+- Faster startup (no image pull operations)
+- Cleaner separation: Puppet=updates, systemd=runtime
 
 ---
 
@@ -406,18 +416,23 @@ class profiles::raspberry_pi (
 - No credentials stored in containers (fetched at runtime from central API)
 
 ### Docker Registry Authentication (GCP Artifact Registry)
-🔐 **Puppet-Managed Token Distribution** (November 2025):
+🔐 **Puppet-Managed Token Distribution and Image Updates** (November 2025):
 - Docker images stored in GCP Artifact Registry (`europe-west1-docker.pkg.dev`)
 - OAuth2 tokens generated hourly on Puppet server
 - Tokens distributed automatically to all devices via Puppet
+- **Puppet handles authentication and pulling new images** (every 30 min)
+- **Systemd service uses locally cached images only** (no authentication required)
 - **No tokens stored in this public repository**
 - **Device-side files**:
   - `/opt/alm/config/gcp-registry-token` - Token file (Puppet-distributed)
-  - `/usr/local/bin/docker-login-gcp` - Docker login helper script
-- **Service integration**: `strealer-container.service` calls docker login before pulling images
+  - `/usr/local/bin/docker-login-gcp` - Docker login helper script (used by Puppet only)
+- **Architecture separation**:
+  - Puppet: Authenticates to GCP, pulls latest images, keeps devices updated
+  - Systemd service: Starts containers using cached images (instant, offline-capable)
+  - `alm reset`: Uses cached images (no network/auth dependency)
 - **Documentation**: See `alm-infra/puppet-infra-config/server-setup/GCP_ARTIFACT_REGISTRY_ACCESS_PROPOSAL.md` for complete architecture
 - **Deployment**: Automated via Ansible playbook in `alm-infra/puppet-infra-config/server-setup/setup_puppet_server.yml`
-- **Benefits**: Hourly rotation, instant revocation, zero manual credential management
+- **Benefits**: Hourly rotation, instant revocation, zero manual credential management, offline-capable startup
 
 ---
 
@@ -501,11 +516,14 @@ alm reset
 
 ### 5️⃣ **Ongoing Updates** (Automated)
 ```
+Puppet authenticates to GCP Artifact Registry (every 30 min) →
+Puppet pulls latest Docker images →
 Puppet ensures configuration files stay current →
-Docker Compose pulls latest images →
-Containers auto-restart with new versions →
+Containers auto-restart with new versions (on image changes) →
 Zero-touch fleet management
 ```
+
+**Note**: User-initiated `alm restart` or `alm reset` use locally cached images (no pull). Puppet handles updates.
 
 ---
 
@@ -781,7 +799,7 @@ alm logs init         # Init container logs
 alm logs main         # Main container logs
 
 # Maintenance
-alm restart           # Restart service (pulls latest images)
+alm restart           # Restart service (uses cached images)
 alm reset             # Nuclear option - deletes everything
 
 # Help
