@@ -10,7 +10,7 @@ WorkingDirectory=/opt/alm
 # Start init container (uses locally cached image - Puppet handles updates)
 ExecStartPre=/bin/bash -c 'ARCH=$(uname -m); if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then docker compose up -d alm_init_arm64; else docker compose up -d alm_init_amd64; fi'
 # Main app container starts via depends_on after init completes (uses locally cached image)
-ExecStart=/bin/bash -c 'ARCH=$(uname -m); if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then docker compose up -d --remove-orphans alm_arm64; else docker compose up -d --remove-orphans alm_amd64; fi'
+ExecStart=/bin/bash -c 'ARCH=$(uname -m); if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then docker compose up -d --remove-orphans alm_arm64 alm_telemetry; else docker compose up -d --remove-orphans alm_amd64 alm_telemetry; fi'
 ExecStop=/usr/bin/docker compose down
 RemainAfterExit=yes
 StandardOutput=journal

@@ -154,6 +154,22 @@ EOF
     fi
 
     echo ""
+    echo -e "${BLUE}Telemetry Worker:${NC}"
+    telemetry_status=$(sudo docker ps -a --filter "name=alm_telemetry" --format "{{.Status}}")
+    if [[ -n "$telemetry_status" ]]; then
+        if echo "$telemetry_status" | grep -qi "Up"; then
+            log_success "Telemetry container: Running"
+            echo "    Sends device info every 5 minutes"
+        else
+            log_warning "Telemetry container: $telemetry_status"
+            echo "    Check logs: alm logs telemetry"
+        fi
+    else
+        log_warning "Telemetry container: Not found"
+        echo "    Start service: sudo systemctl restart strealer-container.service"
+    fi
+
+    echo ""
 }
 
 #
@@ -168,7 +184,7 @@ cmd_logs() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            init|main)
+            init|main|telemetry)
                 container_type="$1"
                 shift
                 ;;
@@ -187,7 +203,7 @@ Usage: alm logs [CONTAINER] [OPTIONS]
 Follow container logs in real-time.
 
 Arguments:
-  CONTAINER    Container to show logs for: init, main (default: main)
+  CONTAINER    Container to show logs for: init, main, telemetry (default: main)
 
 Options:
   --no-follow  Show logs without following (exit after display)
@@ -214,11 +230,17 @@ EOF
     suffix=$(get_container_suffix)
 
     local container_name
-    if [[ "$container_type" == "init" ]]; then
-        container_name="alm_init_${suffix}"
-    else
-        container_name="alm_${suffix}"
-    fi
+    case "$container_type" in
+        init)
+            container_name="alm_init_${suffix}"
+            ;;
+        telemetry)
+            container_name="alm_telemetry"
+            ;;
+        *)
+            container_name="alm_${suffix}"
+            ;;
+    esac
 
     # Show logs using sudo docker (handle gracefully if fails)
     log_info "Showing logs for: $container_name"
@@ -350,8 +372,10 @@ EOF
     # Stop and remove containers
     sudo docker stop "alm_init_${suffix}" 2>/dev/null || true
     sudo docker stop "alm_${suffix}" 2>/dev/null || true
+    sudo docker stop "alm_telemetry" 2>/dev/null || true
     sudo docker rm "alm_init_${suffix}" 2>/dev/null || true
     sudo docker rm "alm_${suffix}" 2>/dev/null || true
+    sudo docker rm "alm_telemetry" 2>/dev/null || true
 
     echo ""
     log_info "Removing Docker volumes..."
