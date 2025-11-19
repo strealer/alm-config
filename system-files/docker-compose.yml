@@ -28,7 +28,7 @@ services:
       context: alm-init
       platforms:
         - linux/arm64
-    image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:${ALM_INIT_ARM64_TAG:-arm64-latest}
+    image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:${ALM_INIT_ARM64_TAG:-latest}
     container_name: alm_init_arm64
     network_mode: host # Use host network to access Host OS local IP
     # No ports exposed - fully automated registration via API
@@ -53,7 +53,7 @@ services:
       context: alm-init
       platforms:
         - linux/amd64
-    image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:${ALM_INIT_AMD64_TAG:-amd64-latest}
+    image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:${ALM_INIT_AMD64_TAG:-latest}
     container_name: alm_init_amd64
     network_mode: host # Use host network to access Host OS local IP
     # No ports exposed - fully automated registration via API
@@ -91,7 +91,7 @@ services:
 
   # ARM64 Main Service for Raspberry Pi devices (starts after init completion)
   alm_arm64:
-    image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:${ALM_APP_ARM64_TAG:-arm64-latest}
+    image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:${ALM_APP_ARM64_TAG:-latest}
     container_name: alm_arm64
     ports:
       - "80:80" # Main HTTP traffic for content delivery
@@ -113,7 +113,7 @@ services:
       start_period: 60s
   # AMD64 Main Service for x86_64 servers (starts after init completion)
   alm_amd64:
-    image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:${ALM_APP_AMD64_TAG:-amd64-latest}
+    image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:${ALM_APP_AMD64_TAG:-latest}
     container_name: alm_amd64
     ports:
       - "80:80" # Main HTTP traffic for content delivery
