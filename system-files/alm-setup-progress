@@ -65,12 +65,14 @@ is_setup_complete() {
     fi
 
     # Check if containers are running (indicates setup complete)
+    # Specifically check for main app containers (alm_arm64 or alm_amd64) AND telemetry
     if command -v docker &>/dev/null; then
-        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'alm_'; then
-            # Containers running, mark setup as complete
-            sudo mkdir -p "$(dirname "$SETUP_COMPLETE_FLAG")" 2>/dev/null || true
-            sudo touch "$SETUP_COMPLETE_FLAG" 2>/dev/null || true
-            return 0
+        local running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+        if echo "$running_containers" | grep -q 'alm_arm64\|alm_amd64'; then
+            if echo "$running_containers" | grep -q 'alm_telemetry'; then
+                # Both main and telemetry containers running = setup complete
+                return 0
+            fi
         fi
     fi
 
@@ -109,10 +111,13 @@ get_setup_progress() {
         fi
     fi
 
-    # Step 6: Containers running
+    # Step 6: Containers running (both main app and telemetry)
     if command -v docker &>/dev/null; then
-        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'alm_'; then
-            ((completed++))
+        local running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+        if echo "$running_containers" | grep -q 'alm_arm64\|alm_amd64'; then
+            if echo "$running_containers" | grep -q 'alm_telemetry'; then
+                ((completed++))
+            fi
         fi
     fi
 
@@ -156,10 +161,18 @@ get_current_step() {
     fi
 
     if command -v docker &>/dev/null; then
-        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'alm_'; then
-            echo "Starting ALM containers..."
-            return
+        local running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
+        # Check if both main and telemetry containers are running
+        if echo "$running_containers" | grep -q 'alm_arm64\|alm_amd64'; then
+            if echo "$running_containers" | grep -q 'alm_telemetry'; then
+                # Both running = setup complete
+                echo "Setup complete!"
+                return
+            fi
         fi
+        # If we get here, containers are not fully running yet
+        echo "Starting ALM containers..."
+        return
     fi
 
     echo "Setup complete!"
