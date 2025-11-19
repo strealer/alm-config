@@ -97,22 +97,25 @@ alias rpi-temp='printf "CPU: %.1f °C\n" "$(awk "{print \$1/1000}" /sys/class/th
 if [[ -z "$ALM_REG_CHECK_DONE" ]] && command -v alm >/dev/null 2>&1; then
   export ALM_REG_CHECK_DONE=1
 
-  if systemctl is-active --quiet strealer-container.service 2>/dev/null; then
-    # Check if main container is running (indicates successful registration)
-    arch=$(uname -m)
-    if [[ "$arch" == "aarch64" ]] || [[ "$arch" == "arm64" ]]; then
-      main_container="alm_arm64"
-    else
-      main_container="alm_amd64"
-    fi
+  # Only show banner if user has docker access (skip for almuser)
+  if docker ps >/dev/null 2>&1; then
+    if systemctl is-active --quiet strealer-container.service 2>/dev/null; then
+      # Check if main container is running (indicates successful registration)
+      arch=$(uname -m)
+      if [[ "$arch" == "aarch64" ]] || [[ "$arch" == "arm64" ]]; then
+        main_container="alm_arm64"
+      else
+        main_container="alm_amd64"
+      fi
 
-    # Use docker ps to check if main container is running (requires sudo but fails gracefully)
-    if sudo docker ps --format '{{.Names}}' 2>/dev/null | grep -Fxq "$main_container"; then
-      echo -e "\n\e[32m✅ ALM is registered. Use \e[1malm status\e[0m\e[32m for current health.\e[0m\n"
+      # Check if main container is running (no sudo needed - user has docker access)
+      if docker ps --format '{{.Names}}' 2>/dev/null | grep -Fxq "$main_container"; then
+        echo -e "\n\e[32m✅ ALM is registered. Use \e[1malm status\e[0m\e[32m for current health.\e[0m\n"
+      else
+        echo -e "\n\e[33m⚙️  ALM auto-registration in progress. Use \e[1malm logs init\e[0m\e[33m to monitor.\e[0m\n"
+      fi
     else
-      echo -e "\n\e[33m⚙️  ALM auto-registration in progress. Use \e[1malm logs init\e[0m\e[33m to monitor.\e[0m\n"
+      echo -e "\n\e[33m⚠️ strealer-container.service is not active. Run \e[1malm restart\e[0m\e[33m if this device should be online.\e[0m\n"
     fi
-  else
-    echo -e "\n\e[33m⚠️ strealer-container.service is not active. Run \e[1malm restart\e[0m\e[33m if this device should be online.\e[0m\n"
   fi
 fi
