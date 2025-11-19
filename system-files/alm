@@ -127,10 +127,13 @@ EOF
 
     echo -e "${BLUE}Container Status:${NC}"
 
+    local init_container="alm_init_${suffix}"
+    local main_container="alm_${suffix}"
+
     # Check init container (should exit after successful registration)
-    if sudo docker ps -a --filter "name=alm_init" --format "{{.Names}}" | grep -q "alm_init"; then
-        init_status=$(sudo docker ps -a --filter "name=alm_init" --format "{{.Status}}")
-        if echo "$init_status" | grep -q "Exited (0)"; then
+    if sudo docker ps -a --format "{{.Names}}" | grep -Fxq "$init_container"; then
+        init_status=$(sudo docker ps -a --filter "name=^${init_container}$" --format "{{.Status}}")
+        if echo "$init_status" | head -n1 | grep -q "Exited (0)"; then
             log_success "Init container: Completed successfully"
             echo "    Registration complete, device initialized"
         else
@@ -142,20 +145,25 @@ EOF
     fi
 
     # Check main container (via HTTP on port 80)
-    if is_container_healthy 80; then
-        log_success "Main container: Running"
-        echo "    Port 80: Application service"
-        echo ""
-        echo -e "${GREEN}Service URL:${NC} http://$ip:80"
+    if sudo docker ps -a --format "{{.Names}}" | grep -Fxq "$main_container"; then
+        if is_container_healthy 80; then
+            log_success "Main container: Running"
+            echo "    Port 80: Application service"
+            echo ""
+            echo -e "${GREEN}Service URL:${NC} http://$ip:80"
+        else
+            log_warning "Main container: Container exists but HTTP check failed"
+            echo "    Device may still be initializing"
+            echo "    Check logs: alm logs"
+        fi
     else
-        log_warning "Main container: Not running"
-        echo "    Device may still be initializing"
-        echo "    Check logs: alm logs"
+        log_warning "Main container: Not found"
+        echo "    Start service: sudo systemctl restart strealer-container.service"
     fi
 
     echo ""
     echo -e "${BLUE}Telemetry Worker:${NC}"
-    telemetry_status=$(sudo docker ps -a --filter "name=alm_telemetry" --format "{{.Status}}")
+    telemetry_status=$(sudo docker ps -a --filter "name=^alm_telemetry$" --format "{{.Status}}")
     if [[ -n "$telemetry_status" ]]; then
         if echo "$telemetry_status" | grep -qi "Up"; then
             log_success "Telemetry container: Running"
