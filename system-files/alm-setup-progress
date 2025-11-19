@@ -1,0 +1,274 @@
+#!/bin/bash
+# ============================================================================
+# ALM Setup Progress Display
+# ============================================================================
+#
+# WHAT THIS SCRIPT DOES:
+# - Displays real-time setup progress during first-time device initialization
+# - Shows progress bars for Docker installation, image pulls, configuration
+# - Only runs during initial setup (not on subsequent logins)
+# - Auto-called from bashrc on SSH login
+#
+# USAGE:
+# - Automatically called from .bashrc during first boot
+# - Manual usage: /usr/local/bin/alm-setup-progress
+#
+# DEPLOYMENT:
+# - Deployed from public alm-config repository via Puppet
+# - Integrated into bashrc for all users (almuser, almadmin, root)
+# ============================================================================
+
+set -euo pipefail
+
+# State files
+SETUP_COMPLETE_FLAG="/var/lib/alm/setup_complete"
+SETUP_STATE_DIR="/var/lib/alm/setup_state"
+DOCKER_PULL_LOG="/var/log/alm/docker-pull.log"
+PUPPET_LAST_RUN="/opt/puppetlabs/puppet/cache/state/last_run_report.yaml"
+
+# Colors
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly RED='\033[0;31m'
+readonly GRAY='\033[0;90m'
+readonly NC='\033[0m' # No Color
+
+# Progress bar function
+progress_bar() {
+    local percent=$1
+    local width=${2:-50}
+    local filled=$((percent * width / 100))
+    local empty=$((width - filled))
+    local bar=""
+    local i
+
+    for ((i=0; i<filled; i++)); do
+        bar="${bar}█"
+    done
+    for ((i=0; i<empty; i++)); do
+        bar="${bar}░"
+    done
+
+    echo -e "[\033[32m${bar}\033[0m] ${percent}%"
+}
+
+# Check if setup is complete
+is_setup_complete() {
+    # Setup is complete if:
+    # 1. Flag file exists, OR
+    # 2. Docker is installed AND containers are running
+
+    if [ -f "$SETUP_COMPLETE_FLAG" ]; then
+        return 0
+    fi
+
+    # Check if containers are running (indicates setup complete)
+    if command -v docker &>/dev/null; then
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'alm_'; then
+            # Containers running, mark setup as complete
+            sudo mkdir -p "$(dirname "$SETUP_COMPLETE_FLAG")" 2>/dev/null || true
+            sudo touch "$SETUP_COMPLETE_FLAG" 2>/dev/null || true
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Get overall setup progress percentage
+get_setup_progress() {
+    local total_steps=6
+    local completed=0
+
+    # Step 1: Docker installed
+    if command -v docker &>/dev/null; then
+        ((completed++))
+    fi
+
+    # Step 2: Docker service running
+    if systemctl is-active --quiet docker 2>/dev/null; then
+        ((completed++))
+    fi
+
+    # Step 3: Puppet configured
+    if [ -f "/etc/puppetlabs/puppet/puppet.conf" ]; then
+        ((completed++))
+    fi
+
+    # Step 4: ALM directories created
+    if [ -d "/opt/alm" ]; then
+        ((completed++))
+    fi
+
+    # Step 5: Docker images pulled
+    if command -v docker &>/dev/null; then
+        if docker images | grep -q 'alm-init\|alm-app'; then
+            ((completed++))
+        fi
+    fi
+
+    # Step 6: Containers running
+    if command -v docker &>/dev/null; then
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'alm_'; then
+            ((completed++))
+        fi
+    fi
+
+    echo $((completed * 100 / total_steps))
+}
+
+# Get current setup step description
+get_current_step() {
+    if ! command -v docker &>/dev/null; then
+        echo "Installing Docker..."
+        return
+    fi
+
+    if ! systemctl is-active --quiet docker 2>/dev/null; then
+        echo "Starting Docker service..."
+        return
+    fi
+
+    if [ ! -f "/etc/puppetlabs/puppet/puppet.conf" ]; then
+        echo "Configuring Puppet agent..."
+        return
+    fi
+
+    if [ ! -d "/opt/alm" ]; then
+        echo "Creating ALM directories..."
+        return
+    fi
+
+    if command -v docker &>/dev/null; then
+        if ! docker images | grep -q 'alm-init\|alm-app'; then
+            # Check if actively pulling
+            if [ -f "$DOCKER_PULL_LOG" ]; then
+                if tail -n 5 "$DOCKER_PULL_LOG" 2>/dev/null | grep -q "Downloading\|Extracting"; then
+                    echo "Pulling Docker images (this may take 3-5 minutes)..."
+                    return
+                fi
+            fi
+            echo "Waiting for Docker image pull to start..."
+            return
+        fi
+    fi
+
+    if command -v docker &>/dev/null; then
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'alm_'; then
+            echo "Starting ALM containers..."
+            return
+        fi
+    fi
+
+    echo "Setup complete!"
+}
+
+# Show detailed docker pull progress if actively pulling
+show_docker_pull_progress() {
+    if [ ! -f "$DOCKER_PULL_LOG" ]; then
+        return
+    fi
+
+    # Check if pull is active (within last 10 seconds)
+    local log_age=0
+    if [ -f "$DOCKER_PULL_LOG" ]; then
+        log_age=$(( $(date +%s) - $(stat -f %m "$DOCKER_PULL_LOG" 2>/dev/null || stat -c %Y "$DOCKER_PULL_LOG" 2>/dev/null || echo 0) ))
+    fi
+
+    if [ "$log_age" -lt 10 ]; then
+        # Show last few progress lines
+        echo ""
+        echo -e "${BLUE}Docker Pull Progress:${NC}"
+        tail -n 3 "$DOCKER_PULL_LOG" 2>/dev/null | grep -E "⬇️|📂|✅|💾" | while read -r line; do
+            echo "  $line"
+        done
+    fi
+}
+
+# Display setup progress
+display_progress() {
+    clear
+
+    cat << "EOF"
+╔════════════════════════════════════════════════════════════════╗
+║                                                                ║
+║     ███████╗████████╗██████╗ ███████╗ █████╗ ██╗     ███████╗ ║
+║     ██╔════╝╚══██╔══╝██╔══██╗██╔════╝██╔══██╗██║     ██╔════╝ ║
+║     ███████╗   ██║   ██████╔╝█████╗  ███████║██║     █████╗   ║
+║     ╚════██║   ██║   ██╔══██╗██╔══╝  ██╔══██║██║     ██╔══╝   ║
+║     ███████║   ██║   ██║  ██║███████╗██║  ██║███████╗███████╗ ║
+║     ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝ ║
+║                                                                ║
+║              AUTONOMOUS LOCAL MANAGER - FIRST BOOT             ║
+║                                                                ║
+╚════════════════════════════════════════════════════════════════╝
+EOF
+
+    echo ""
+    local progress=$(get_setup_progress)
+    local current_step=$(get_current_step)
+    local bar=$(progress_bar "$progress" 60)
+
+    echo -e "${CYAN}Setup Progress:${NC}"
+    echo "$bar"
+    echo ""
+    echo -e "${YELLOW}Current Step:${NC} $current_step"
+    echo ""
+
+    # Show detailed progress for docker pulls
+    show_docker_pull_progress
+
+    echo ""
+    echo -e "${GRAY}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    if [ "$progress" -eq 100 ]; then
+        echo -e "${GREEN}✅ Setup Complete!${NC}"
+        echo ""
+        echo "Your device is now ready. Available commands:"
+        echo "  ${BLUE}alm status${NC}   - Check device and container status"
+        echo "  ${BLUE}alm logs${NC}     - View container logs"
+        echo "  ${BLUE}alm help${NC}     - Show all available commands"
+        echo ""
+
+        # Mark setup as complete
+        sudo mkdir -p "$(dirname "$SETUP_COMPLETE_FLAG")" 2>/dev/null || true
+        sudo touch "$SETUP_COMPLETE_FLAG" 2>/dev/null || true
+    else
+        echo -e "${YELLOW}⏳ Setup in progress...${NC}"
+        echo ""
+        echo "Estimated time remaining: $(( (100 - progress) / 20 + 1 )) minutes"
+        echo ""
+        echo "You can:"
+        echo "  • Wait here and watch progress"
+        echo "  • Log out and check back later (${BLUE}ssh almuser@device-ip${NC})"
+        echo "  • Monitor detailed logs: ${BLUE}alm pull -f${NC}"
+        echo ""
+        echo -e "${GRAY}This screen updates automatically. Press Ctrl+C to exit.${NC}"
+    fi
+}
+
+# Main execution
+main() {
+    # Skip if setup is already complete
+    if is_setup_complete; then
+        exit 0
+    fi
+
+    # Show progress
+    display_progress
+
+    # If not complete, offer to auto-refresh
+    if [ "$(get_setup_progress)" -ne 100 ]; then
+        echo ""
+        read -t 5 -p "Auto-refresh in 5 seconds (or press Enter now)..." || true
+        exec "$0" "$@"
+    fi
+}
+
+# Only run if called directly (not sourced)
+if [ "${BASH_SOURCE[0]}" == "${0}" ]; then
+    main "$@"
+fi

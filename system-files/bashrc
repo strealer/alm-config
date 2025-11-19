@@ -92,7 +92,27 @@ alias myip='hostname -I | awk "{print \$1}"'
 alias rpi-temp='printf "CPU: %.1f °C\n" "$(awk "{print \$1/1000}" /sys/class/thermal/thermal_zone0/temp)"'
 
 ###############################################################################
-# ALM Zero-Touch Status Banner (runs once per shell session)
+# ALM First-Boot Setup Progress Display
+###############################################################################
+# Show comprehensive setup progress during initial device configuration
+# Only runs during first boot until setup is complete
+if [[ -z "$ALM_SETUP_CHECK_DONE" ]] && [ -x /usr/local/bin/alm-setup-progress ]; then
+  export ALM_SETUP_CHECK_DONE=1
+
+  # Check if setup is in progress (no flag file exists and containers not running)
+  SETUP_COMPLETE_FLAG="/var/lib/alm/setup_complete"
+
+  if [ ! -f "$SETUP_COMPLETE_FLAG" ]; then
+    # Check if containers are running (if not, setup still in progress)
+    if ! (command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'alm_'); then
+      # Setup not complete, show progress display
+      /usr/local/bin/alm-setup-progress
+    fi
+  fi
+fi
+
+###############################################################################
+# ALM Zero-Touch Status Banner (runs once per shell session after setup)
 ###############################################################################
 if [[ -z "$ALM_REG_CHECK_DONE" ]] && command -v alm >/dev/null 2>&1; then
   export ALM_REG_CHECK_DONE=1

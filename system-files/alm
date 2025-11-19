@@ -425,6 +425,7 @@ ${BLUE}Usage:${NC}
 ${BLUE}Commands:${NC}
   ${GREEN}status${NC}       Show device and container status
   ${GREEN}logs${NC}         Follow container logs in real-time
+  ${GREEN}pull${NC}         Monitor Docker image pull progress
   ${GREEN}restart${NC}      Restart ALM service
   ${GREEN}reset${NC}        Reset device for fresh registration (deletes all data)
   ${GREEN}help${NC}         Show this help message
@@ -433,11 +434,13 @@ ${BLUE}Examples:${NC}
   alm status            # Check device and container status
   alm logs init         # View init container logs (registration process)
   alm logs main         # View main container logs (application)
+  alm pull -f           # Monitor image download progress in real-time
   alm restart           # Restart ALM service
   alm reset             # Reset device to start fresh
 
 ${BLUE}Get Help for Specific Commands:${NC}
   alm logs --help
+  alm pull --help
   alm restart --help
   alm reset --help
 
@@ -451,6 +454,7 @@ ${BLUE}Automated Registration:${NC}
 ${BLUE}Troubleshooting:${NC}
   • Check status:       alm status
   • View logs:          alm logs
+  • Monitor updates:    alm pull
   • Restart service:    alm restart
   • Service status:     sudo systemctl status strealer-container.service
   • Docker status:      sudo systemctl status docker
@@ -460,6 +464,100 @@ ${BLUE}Service Ports:${NC}
 
 For more information, visit: https://github.com/strealer/alm-config
 EOF
+}
+
+#
+# Command: alm pull
+# Monitor Docker image pull progress
+#
+cmd_pull() {
+    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+        cat <<EOF
+Usage: alm pull [options]
+
+Monitor Docker image pull progress in real-time.
+
+This command shows the progress of Docker image downloads that happen
+automatically via Puppet every 30 minutes. You can see:
+  • Real-time download progress with percentages
+  • Layer-by-layer extraction status
+  • Cached vs new downloads
+  • Overall pull completion
+
+Options:
+  -f, --follow    Follow log file in real-time (like tail -f)
+  -n NUM          Show last NUM lines (default: 50)
+
+Examples:
+  alm pull              # Show recent pull activity
+  alm pull -f           # Follow pull progress in real-time
+  alm pull -n 100       # Show last 100 lines
+
+Log Location:
+  /var/log/alm/docker-pull.log
+
+Note: Image pulls happen automatically via Puppet. This command only
+monitors the progress - it does not trigger new pulls.
+EOF
+        return 0
+    fi
+
+    local log_file="/var/log/alm/docker-pull.log"
+    local follow=false
+    local lines=50
+
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--follow)
+                follow=true
+                shift
+                ;;
+            -n|--lines)
+                if [[ -n "${2:-}" ]] && [[ "$2" =~ ^[0-9]+$ ]]; then
+                    lines=$2
+                    shift 2
+                else
+                    log_error "Option -n requires a numeric argument"
+                    return 1
+                fi
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                echo "Run 'alm pull --help' for usage information"
+                return 1
+                ;;
+        esac
+    done
+
+    echo ""
+    log_info "Docker Image Pull Progress Monitor"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+
+    # Check if log file exists
+    if [[ ! -f "$log_file" ]]; then
+        log_warning "Log file not found: $log_file"
+        echo ""
+        log_info "The log file will be created when Puppet runs the next image pull."
+        log_info "Puppet runs automatically every 30 minutes to check for updates."
+        echo ""
+        log_info "You can also check Puppet logs for pull activity:"
+        echo "  sudo journalctl -u puppet -f | grep docker-pull"
+        return 0
+    fi
+
+    if [[ "$follow" == true ]]; then
+        log_info "Following pull progress (press Ctrl+C to stop)..."
+        echo ""
+        tail -f "$log_file"
+    else
+        log_info "Showing last $lines lines from pull log..."
+        echo ""
+        tail -n "$lines" "$log_file"
+        echo ""
+        log_info "Use 'alm pull -f' to follow real-time progress"
+    fi
 }
 
 #
@@ -481,6 +579,9 @@ main() {
             ;;
         logs)
             cmd_logs "$@"
+            ;;
+        pull)
+            cmd_pull "$@"
             ;;
         restart)
             cmd_restart "$@"

@@ -1,0 +1,309 @@
+#!/bin/bash
+# ============================================================================
+# Docker Pull with Real-Time Progress Tracking
+# ============================================================================
+#
+# WHAT THIS SCRIPT DOES:
+# - Pulls Docker images using Docker Socket API for detailed progress
+# - Shows real-time byte counts, percentages, and layer-by-layer progress
+# - Falls back to standard docker pull if API is unavailable
+# - Logs all output to /var/log/alm/docker-pull.log for monitoring
+#
+# USAGE:
+# - Called by Puppet during image updates
+# - Manual usage: sudo /usr/local/bin/docker-pull-with-progress <image:tag>
+#
+# DEPLOYMENT:
+# - Deployed from public alm-config repository
+# - Used by Puppet profiles (raspberry_pi.pp, amd_server.pp, dev_machine.pp)
+# - Requires Docker socket access (runs as root via Puppet)
+#
+# MONITORING:
+# - Users can watch: tail -f /var/log/alm/docker-pull.log
+# - Puppet logs: journalctl -u puppet -f
+# ============================================================================
+
+IMAGE="$1"
+LOG_FILE="/var/log/alm/docker-pull.log"
+DOCKER_SOCKET="/var/run/docker.sock"
+
+# Validate input
+if [ -z "$IMAGE" ]; then
+    echo "ERROR: Usage: $0 <image:tag>" >&2
+    echo "Example: $0 europe-west1-docker.pkg.dev/project/repo/image:latest" >&2
+    exit 1
+fi
+
+# Create log directory
+mkdir -p /var/log/alm
+
+# Logging function with timestamp
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
+}
+
+# Convert bytes to human-readable format
+bytes_to_human() {
+    local bytes=$1
+    if [ "$bytes" -lt 1024 ]; then
+        echo "${bytes}B"
+    elif [ "$bytes" -lt 1048576 ]; then
+        echo "$((bytes / 1024))KB"
+    elif [ "$bytes" -lt 1073741824 ]; then
+        echo "$((bytes / 1048576))MB"
+    else
+        echo "$((bytes / 1073741824))GB"
+    fi
+}
+
+# Generate progress bar
+# Usage: progress_bar <percent> <width>
+progress_bar() {
+    local percent=$1
+    local width=${2:-50}
+    local filled=$((percent * width / 100))
+    local empty=$((width - filled))
+
+    # Build the bar
+    local bar=""
+    local i
+
+    # Filled portion (green)
+    for ((i=0; i<filled; i++)); do
+        bar="${bar}█"
+    done
+
+    # Empty portion
+    for ((i=0; i<empty; i++)); do
+        bar="${bar}░"
+    done
+
+    # Return with color and percentage
+    echo -e "[\033[32m${bar}\033[0m] ${percent}%"
+}
+
+# Check if we can use Docker API
+can_use_docker_api() {
+    # Check if socket exists and is accessible
+    if [ ! -S "$DOCKER_SOCKET" ]; then
+        log "⚠️  Docker socket not found at $DOCKER_SOCKET"
+        return 1
+    fi
+
+    # Check if curl is available
+    if ! command -v curl &>/dev/null; then
+        log "⚠️  curl not found, cannot use Docker API"
+        return 1
+    fi
+
+    # Test socket connectivity
+    if ! curl --unix-socket "$DOCKER_SOCKET" --max-time 2 \
+        "http://localhost/_ping" &>/dev/null; then
+        log "⚠️  Docker socket not responding"
+        return 1
+    fi
+
+    return 0
+}
+
+# Fallback to standard docker pull
+fallback_docker_pull() {
+    log "=========================================="
+    log "📦 PULLING IMAGE (standard mode)"
+    log "=========================================="
+    log "Image: $IMAGE"
+    log "Method: docker pull CLI"
+    log "=========================================="
+
+    # Capture docker pull output
+    docker pull "$IMAGE" 2>&1 | while IFS= read -r line; do
+        log "$line"
+    done
+
+    EXIT_CODE=${PIPESTATUS[0]}
+
+    log "=========================================="
+    if [ $EXIT_CODE -eq 0 ]; then
+        log "✅ PULL SUCCESSFUL"
+    else
+        log "❌ PULL FAILED (exit code: $EXIT_CODE)"
+    fi
+    log "=========================================="
+
+    return $EXIT_CODE
+}
+
+# Main function using Docker API
+docker_api_pull() {
+    log "=========================================="
+    log "📦 PULLING IMAGE (enhanced mode)"
+    log "=========================================="
+    log "Image: $IMAGE"
+    log "Method: Docker Socket API (detailed progress)"
+    log "=========================================="
+
+    # Track layers
+    declare -A layer_status
+    total_layers=0
+    completed_layers=0
+
+    # Track last progress update time per layer to avoid spam
+    declare -A last_update_time
+
+    # Make Docker API call
+    # API endpoint: POST /images/create?fromImage=<image>
+    curl --unix-socket "$DOCKER_SOCKET" -X POST \
+        "http://localhost/v1.41/images/create?fromImage=${IMAGE}" 2>/dev/null | \
+    while IFS= read -r json_line; do
+
+        # Log raw JSON to file for debugging (but not to console)
+        echo "[$(date '+%H:%M:%S')] $json_line" >> "$LOG_FILE"
+
+        # Extract fields using grep (no jq dependency)
+        status=$(echo "$json_line" | grep -oP '"status":"\K[^"]+' 2>/dev/null || echo "")
+        layer_id=$(echo "$json_line" | grep -oP '"id":"\K[^"]+' 2>/dev/null || echo "")
+        current=$(echo "$json_line" | grep -oP '"current":\K[0-9]+' 2>/dev/null || echo "0")
+        total=$(echo "$json_line" | grep -oP '"total":\K[0-9]+' 2>/dev/null || echo "0")
+
+        # Get current timestamp for rate limiting
+        current_time=$(date +%s)
+
+        # Process status updates
+        case "$status" in
+            "Pulling from"*)
+                log "🔄 $status"
+                ;;
+
+            "Pulling fs layer")
+                if [ -n "$layer_id" ] && [ -z "${layer_status[$layer_id]}" ]; then
+                    layer_status[$layer_id]="pulling"
+                    ((total_layers++))
+                    log "📋 Layer $layer_id queued (total: $total_layers layers)"
+                fi
+                ;;
+
+            "Waiting")
+                # Don't log waiting status - too verbose
+                ;;
+
+            "Downloading")
+                if [ -n "$layer_id" ] && [ "$total" -gt 0 ]; then
+                    # Rate limit: only log every 2 seconds per layer
+                    last_time=${last_update_time[$layer_id]:-0}
+                    if [ $((current_time - last_time)) -ge 2 ]; then
+                        percent=$((current * 100 / total))
+                        current_h=$(bytes_to_human "$current")
+                        total_h=$(bytes_to_human "$total")
+                        bar=$(progress_bar "$percent" 40)
+                        log "⬇️  Layer $layer_id: $bar ($current_h / $total_h)"
+                        last_update_time[$layer_id]=$current_time
+                    fi
+                fi
+                ;;
+
+            "Verifying Checksum")
+                if [ -n "$layer_id" ]; then
+                    log "🔍 Layer $layer_id: Verifying checksum..."
+                fi
+                ;;
+
+            "Download complete")
+                if [ -n "$layer_id" ]; then
+                    log "✅ Layer $layer_id: Download complete"
+                    layer_status[$layer_id]="downloaded"
+                fi
+                ;;
+
+            "Extracting")
+                if [ -n "$layer_id" ]; then
+                    if [ "$total" -gt 0 ]; then
+                        # Rate limit extraction progress too
+                        last_time=${last_update_time[$layer_id]:-0}
+                        if [ $((current_time - last_time)) -ge 2 ]; then
+                            percent=$((current * 100 / total))
+                            bar=$(progress_bar "$percent" 40)
+                            log "📂 Layer $layer_id: Extracting $bar"
+                            last_update_time[$layer_id]=$current_time
+                        fi
+                    elif [ "${layer_status[$layer_id]}" != "extracting" ]; then
+                        log "📂 Layer $layer_id: Extracting..."
+                        layer_status[$layer_id]="extracting"
+                    fi
+                fi
+                ;;
+
+            "Pull complete")
+                if [ -n "$layer_id" ]; then
+                    ((completed_layers++))
+                    log "✅ Layer $layer_id: Complete ($completed_layers/$total_layers)"
+                    layer_status[$layer_id]="complete"
+                fi
+                ;;
+
+            "Already exists")
+                if [ -n "$layer_id" ]; then
+                    ((completed_layers++))
+                    log "💾 Layer $layer_id: Already cached ($completed_layers/$total_layers)"
+                    layer_status[$layer_id]="cached"
+                fi
+                ;;
+
+            "Digest:"*)
+                # Extract digest value
+                digest=$(echo "$status" | sed 's/Digest: //')
+                log "🔐 Image digest: ${digest:0:20}..."
+                ;;
+
+            "Status:"*)
+                log "📊 $status"
+                ;;
+        esac
+    done
+
+    EXIT_CODE=${PIPESTATUS[0]}
+
+    log "=========================================="
+    if [ $EXIT_CODE -eq 0 ]; then
+        log "✅ PULL SUCCESSFUL"
+        if [ "$total_layers" -gt 0 ]; then
+            overall_percent=$((completed_layers * 100 / total_layers))
+            overall_bar=$(progress_bar "$overall_percent" 50)
+            log "Overall Progress: $overall_bar"
+            log "Layers: $completed_layers/$total_layers completed"
+        fi
+    else
+        log "❌ PULL FAILED (exit code: $EXIT_CODE)"
+    fi
+    log "=========================================="
+
+    return $EXIT_CODE
+}
+
+# Main execution
+log ""
+log "╔════════════════════════════════════════╗"
+log "║   DOCKER IMAGE PULL STARTING           ║"
+log "╚════════════════════════════════════════╝"
+log ""
+
+# Try Docker API first, fallback to standard pull
+if can_use_docker_api; then
+    docker_api_pull
+    EXIT_CODE=$?
+else
+    log "Falling back to standard docker pull..."
+    fallback_docker_pull
+    EXIT_CODE=$?
+fi
+
+log ""
+log "╔════════════════════════════════════════╗"
+if [ $EXIT_CODE -eq 0 ]; then
+    log "║   DOCKER IMAGE PULL COMPLETE ✅        ║"
+else
+    log "║   DOCKER IMAGE PULL FAILED ❌          ║"
+fi
+log "╚════════════════════════════════════════╝"
+log ""
+
+exit $EXIT_CODE
