@@ -24,10 +24,6 @@ services:
   # ARM64 Init Service for Raspberry Pi devices
   # FULLY AUTOMATED - No user interaction required
   alm_init_arm64:
-    build:
-      context: alm-init
-      platforms:
-        - linux/arm64
     image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:${ALM_INIT_ARM64_TAG:-latest}
     container_name: alm_init_arm64
     network_mode: host # Use host network to access Host OS local IP
@@ -49,10 +45,6 @@ services:
   # AMD64 Init Service for x86_64 servers
   # FULLY AUTOMATED - No user interaction required
   alm_init_amd64:
-    build:
-      context: alm-init
-      platforms:
-        - linux/amd64
     image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:${ALM_INIT_AMD64_TAG:-latest}
     container_name: alm_init_amd64
     network_mode: host # Use host network to access Host OS local IP
