@@ -253,7 +253,12 @@ EOF
     else
         echo -e "${YELLOW}⏳ Setup in progress...${NC}"
         echo ""
-        echo "Estimated time remaining: $(( (100 - progress) / 20 + 1 )) minutes"
+        local time_remaining=$(( (100 - progress) / 20 + 1 ))
+        if [ "$time_remaining" -eq 1 ]; then
+            echo "Estimated time remaining: 1 minute"
+        else
+            echo "Estimated time remaining: $time_remaining minutes"
+        fi
         echo ""
         echo "You can:"
         echo "  • Wait here and watch progress"
