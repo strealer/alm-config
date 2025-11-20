@@ -38,11 +38,6 @@ Setup Progress:
 
 Current Step: Pulling Docker images (this may take 3-5 minutes)...
 
-Docker Pull Progress:
-  ⬇️  Layer abc123: [████████████░░░░░░░░] 60% (120MB / 200MB)
-  ⬇️  Layer def456: [██████░░░░░░░░░░░░░░] 30% (45MB / 150MB)
-  📂 Layer ghi789: Extracting [████████████████░░░░] 75%
-
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ⏳ Setup in progress...
@@ -52,7 +47,7 @@ Estimated time remaining: 3 minutes
 You can:
   • Wait here and watch progress
   • Log out and check back later (ssh almuser@device-ip)
-  • Monitor detailed logs: alm pull -f
+  • Monitor detailed logs: alm logs init / alm logs main
 
 This screen updates automatically. Press Ctrl+C to exit.
 
@@ -108,8 +103,7 @@ Time  | Progress | Step                          | What User Sees on Login
 04:00 | 66%      | ALM directories created       | "Creating ALM directories..."
 04:30 | 66%      | Waiting for image pull        | "Waiting for Docker image pull to start..."
 05:00 | 66%      | Pulling init image (150MB)    | "Pulling Docker images (3-5 minutes)..."
-      |          |                               | [████░░░░░] 10% (15MB / 150MB)
-06:00 | 66%      | Pulling main app (400MB)      | [████████░░] 40% (160MB / 400MB)
+06:00 | 66%      | Pulling main app (400MB)      | "Pulling Docker images (3-5 minutes)..."
 07:30 | 83%      | Images pulled, extracting     | [████████████████░] 80% (320MB / 400MB)
 08:00 | 83%      | Starting containers           | "Starting ALM containers..."
 08:30 | 100%     | Setup complete!               | "✅ Setup Complete!"
@@ -282,7 +276,7 @@ Last update: 10 minutes ago  <-- Stuck!
 
 Admin can:
   • Check Puppet logs: journalctl -u puppet -f
-  • Check Docker pull logs: tail -f /var/log/alm/docker-pull.log
+  • Watch docker output: journalctl -u puppet -f | grep docker
   • Manually trigger pull: sudo puppet agent -t
 ```
 
@@ -295,7 +289,6 @@ Admin can:
 | File | Purpose | When Created |
 |------|---------|--------------|
 | `/var/lib/alm/setup_complete` | Setup completion flag | When containers start running |
-| `/var/log/alm/docker-pull.log` | Docker pull progress | During image pulls |
 | `/opt/puppetlabs/puppet/cache/state/last_run_report.yaml` | Puppet status | Every Puppet run |
 
 ### Completion Detection
@@ -366,8 +359,8 @@ else
 fi
 
 # Monitor specific components
-tail -f /var/log/alm/docker-pull.log    # Docker pulls
-journalctl -u puppet -f                  # Puppet activity
+journalctl -u puppet -f                  # Puppet activity (includes docker pull output)
+journalctl -u puppet -f | grep docker    # Filter for docker pulls
 journalctl -u docker -f                  # Docker service
 ```
 
@@ -381,7 +374,7 @@ journalctl -u docker -f                  # Docker service
 
 **Causes**:
 1. Puppet not running (check `systemctl status puppet`)
-2. Docker pull hanging (check `/var/log/alm/docker-pull.log`)
+2. Docker pull hanging (watch `journalctl -u puppet -f | grep docker`)
 3. Network issues (check internet connectivity)
 
 **Solution**:
@@ -392,8 +385,8 @@ sudo systemctl status puppet
 # Manually trigger Puppet
 sudo puppet agent -t
 
-# Check Docker pull logs
-tail -f /var/log/alm/docker-pull.log
+# Watch docker output from the latest Puppet run
+journalctl -u puppet -f | grep docker
 ```
 
 ### Progress Display Not Showing
@@ -478,7 +471,7 @@ sudo mkdir -p /var/lib/alm
 1. ✅ Created `alm-setup-progress` script with 6-step tracking
 2. ✅ Integrated into bashrc for automatic display
 3. ✅ Added to all 3 Puppet profiles (raspberry_pi, amd_server, dev_machine)
-4. ✅ Progress bars for Docker pulls integrated
+4. ✅ Auto-refresh + stuck detection built-in
 
 **User Impact**:
 - **First boot**: See comprehensive setup progress automatically

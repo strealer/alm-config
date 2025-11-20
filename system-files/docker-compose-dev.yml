@@ -171,6 +171,7 @@ volumes:
 # - Main containers expose port 80 for cached content.
 #
 # REGISTRY ACCESS:
-# - Ensure `/usr/local/bin/docker-login-gcp` succeeds before calling `docker
-#   compose pull` on production devices so Artifact Registry pulls work.
+# - Ensure the Puppet-managed `docker login` has run (or manually source
+#   `/opt/alm/config/gcp-registry-token`) before calling `docker compose pull`
+#   so Artifact Registry pulls work.
 # ============================================================================

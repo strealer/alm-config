@@ -8,8 +8,8 @@
 # - **Telemetry phase** (`alm_telemetry`): Cron sidecar that runs the legacy
 #   `cron_5m.sh` workflow every five minutes using the same volumes.
 # - **Images**: Multi-arch images are pulled from
-#   `europe-west1-docker.pkg.dev/...` and require `docker-login-gcp` before pull
-#   on real devices. Override tags via `ALM_*_TAG` environment variables when
+#   `europe-west1-docker.pkg.dev/...`. Puppet performs the `docker login`
+#   before each pull on real devices. Override tags via `ALM_*_TAG` environment
 #   pinning specific versions.
 # - **Volumes**: `alm_config` and `alm_persist` are Docker named volumes so no
 #   host bind mounts are required.
@@ -161,6 +161,7 @@ volumes:
 # - Main containers expose port 80 for cached content.
 #
 # REGISTRY ACCESS:
-# - Ensure `/usr/local/bin/docker-login-gcp` succeeds before calling `docker
-#   compose pull` on production devices so Artifact Registry pulls work.
+# - Ensure the Puppet-managed `docker login` has run (or manually source
+#   `/opt/alm/config/gcp-registry-token`) before calling `docker compose pull`
+#   on production devices so Artifact Registry pulls work.
 # ============================================================================

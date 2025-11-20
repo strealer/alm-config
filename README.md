@@ -15,7 +15,6 @@ For the full operational handbook see `../docs/ALM_OPERATIONS.md`.
 | `configure_puppet_agent.service` | `/etc/systemd/system/` | Runs the script on first boot |
 | `strealer-container.service` | `/etc/systemd/system/` | Starts `docker compose up` for init → main → telemetry |
 | `docker-compose.yml` | `/opt/alm/docker-compose.yml` | Production compose file (GCP images, telemetry service, zero host bind mounts) |
-| `docker-login-gcp` | `/usr/local/bin/docker-login-gcp` | Reads `/opt/alm/config/gcp-registry-token` and logs into Artifact Registry |
 | `puppet.conf` | `/etc/puppetlabs/puppet/puppet.conf` (during first-run provisioning) |
 
 ## Zero-touch bootstrap script
@@ -49,6 +48,10 @@ alm reset                  # Factory reset, deletes config/volumes, restarts ini
 
 The CLI never exposes configuration secrets—`almuser` can only observe the
 stack and request restarts/resets.
+
+> Artifact Registry authentication is handled inside the Puppet manifests. They
+> template `/opt/alm/config/gcp-registry-token` and execute `docker login`
+> before pulling images, so there is no separate helper script in this repo.
 
 ## Docker compose (production copy)
 

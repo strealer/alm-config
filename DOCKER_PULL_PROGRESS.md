@@ -1,8 +1,25 @@
 # Docker Pull Progress Tracking
 
+> **Status (2025-11-20):** This document captures the proposed design for an
+> enhanced pull experience. The `docker-pull-with-progress` helper is *not*
+> currently shipped in `system-files/`, and Puppet calls native `docker pull`
+> after running `docker login`. Leave this document in place for future work,
+> but direct technicians to `docs/ALM_OPERATIONS.md` for the behavior that is in
+> production today.
+
 ## Overview
 
-The Strealer ALM system now includes **real-time Docker image pull progress tracking** using the Docker Socket API. This provides users with detailed visibility into image downloads that happen automatically via Puppet.
+The Strealer ALM system previously targeted **real-time Docker image pull progress tracking** using the Docker Socket API. When implemented, this would provide users with detailed visibility into image downloads that happen automatically via Puppet.
+
+## Current Production Behavior
+
+- Puppet executes `docker login` followed by plain `docker pull` for
+  `alm-init`, `alm-app`, and `alm-telemetry`. There is no progress parser and no
+  `/var/log/alm/docker-pull.log` by default.
+- `alm pull` remains available but simply tails that log file; on current builds
+  it will inform the user that no log exists until this enhancement ships.
+- Revisit this document when the helper script is reintroduced (tracked in
+  `CLAUDE.md` and `docs/ALM_OPERATIONS.md`).
 
 ---
 
@@ -21,10 +38,8 @@ The Strealer ALM system now includes **real-time Docker image pull progress trac
 
 ### Components
 
-1. **`docker-pull-with-progress`** - Progress tracking wrapper script
-   - Location: `/usr/local/bin/docker-pull-with-progress`
-   - Source: `alm-config/system-files/docker-pull-with-progress`
-   - Deployed by: Puppet (from public GitHub repo)
+1. **`docker-pull-with-progress`** *(not deployed)* - Proposed progress tracking
+   wrapper script that would live under `/usr/local/bin/`.
 
 2. **Puppet Integration** - Automated deployment and usage
    - Profiles updated: `raspberry_pi.pp`, `amd_server.pp`, `dev_machine.pp`
