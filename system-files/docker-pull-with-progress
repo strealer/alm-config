@@ -146,6 +146,7 @@ docker_api_pull() {
     declare -A layer_status
     total_layers=0
     completed_layers=0
+    auth_error=0
 
     # Track last progress update time per layer to avoid spam
     declare -A last_update_time
@@ -158,6 +159,14 @@ docker_api_pull() {
 
         # Log raw JSON to file for debugging (but not to console)
         echo "[$(date '+%H:%M:%S')] $json_line" >> "$LOG_FILE"
+
+        # Check for authentication or authorization errors
+        if echo "$json_line" | grep -q '"message".*\(denied\|Unauthenticated\|unauthorized\|authentication required\)'; then
+            error_msg=$(echo "$json_line" | grep -oP '"message":"\K[^"]+' 2>/dev/null || echo "Authentication failed")
+            log "❌ AUTHENTICATION ERROR: $error_msg"
+            auth_error=1
+            break
+        fi
 
         # Extract fields using grep (no jq dependency)
         status=$(echo "$json_line" | grep -oP '"status":"\K[^"]+' 2>/dev/null || echo "")
@@ -262,8 +271,13 @@ docker_api_pull() {
 
     EXIT_CODE=${PIPESTATUS[0]}
 
+    # Override exit code if authentication error detected
+    if [ "$auth_error" -eq 1 ]; then
+        EXIT_CODE=1
+    fi
+
     log "=========================================="
-    if [ $EXIT_CODE -eq 0 ]; then
+    if [ $EXIT_CODE -eq 0 ] && [ "$auth_error" -eq 0 ]; then
         log "✅ PULL SUCCESSFUL"
         if [ "$total_layers" -gt 0 ]; then
             overall_percent=$((completed_layers * 100 / total_layers))
@@ -272,7 +286,12 @@ docker_api_pull() {
             log "Layers: $completed_layers/$total_layers completed"
         fi
     else
-        log "❌ PULL FAILED (exit code: $EXIT_CODE)"
+        if [ "$auth_error" -eq 1 ]; then
+            log "❌ PULL FAILED: Authentication/authorization error"
+            log "💡 TIP: Docker login may have expired. Puppet will retry on next run."
+        else
+            log "❌ PULL FAILED (exit code: $EXIT_CODE)"
+        fi
     fi
     log "=========================================="
 
