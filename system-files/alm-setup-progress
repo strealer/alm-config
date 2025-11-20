@@ -57,20 +57,38 @@ progress_bar() {
 is_setup_complete() {
     # Setup is complete if:
     # 1. Flag file exists, OR
-    # 2. Docker is installed AND containers are running
+    # 2. Port 80 is responding (primary check - works for all users), OR
+    # 3. Docker containers running (only for almadmin/root)
 
     if [ -f "$SETUP_COMPLETE_FLAG" ]; then
         return 0
     fi
 
-    # Check if containers are running (indicates setup complete)
-    # Specifically check for main app containers (alm_arm64 or alm_amd64) AND telemetry
-    if command -v docker &>/dev/null; then
-        local running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
-        if echo "$running_containers" | grep -q 'alm_arm64\|alm_amd64'; then
-            if echo "$running_containers" | grep -q 'alm_telemetry'; then
-                # Both main and telemetry containers running = setup complete
-                return 0
+    # Primary completion check: nginx serving on port 80
+    # This is checked continuously in the monitoring loop and works for all users
+    # Try curl first, fall back to wget (more commonly pre-installed)
+    if command -v curl &>/dev/null; then
+        if curl -f -s -o /dev/null localhost:80 2>/dev/null; then
+            return 0
+        fi
+    elif command -v wget &>/dev/null; then
+        if wget -q -O /dev/null --timeout=2 localhost:80 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    # Secondary check: Docker containers running (only for users with Docker access)
+    # Only run Docker commands for almadmin and root
+    local current_user
+    current_user=$(whoami)
+    if [[ "$current_user" == "almadmin" || "$current_user" == "root" ]]; then
+        if command -v docker &>/dev/null; then
+            local running_containers
+            running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null || echo "")
+            if echo "$running_containers" | grep -q 'alm_arm64\|alm_amd64'; then
+                if echo "$running_containers" | grep -q 'alm_telemetry'; then
+                    return 0
+                fi
             fi
         fi
     fi
@@ -104,22 +122,48 @@ get_setup_progress() {
     fi
 
     # Step 5: Docker images pulled (check all required images exist)
-    if command -v docker &>/dev/null; then
-        # Check if all three required images exist locally
-        if docker image inspect \
-            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:latest \
-            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:latest \
-            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-telemetry/alm-telemetry:latest \
-            >/dev/null 2>&1; then
+    # Only check for almadmin and root (requires Docker group access)
+    local current_user
+    current_user=$(whoami)
+    if [[ "$current_user" == "almadmin" || "$current_user" == "root" ]]; then
+        if command -v docker &>/dev/null; then
+            # Check if all three required images exist locally
+            if docker image inspect \
+                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:latest \
+                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:latest \
+                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-telemetry/alm-telemetry:latest \
+                >/dev/null 2>&1; then
+                ((completed++))
+            fi
+        fi
+    else
+        # For almuser: skip this step (no Docker access)
+        # Assume progress if Docker service is running
+        if systemctl is-active --quiet docker 2>/dev/null; then
             ((completed++))
         fi
     fi
 
     # Step 6: Containers running (both main app and telemetry)
-    if command -v docker &>/dev/null; then
-        local running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
-        if echo "$running_containers" | grep -q 'alm_arm64\|alm_amd64'; then
-            if echo "$running_containers" | grep -q 'alm_telemetry'; then
+    # Only check for almadmin and root (requires Docker group access)
+    if [[ "$current_user" == "almadmin" || "$current_user" == "root" ]]; then
+        if command -v docker &>/dev/null; then
+            local running_containers
+            running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null || echo "")
+            if echo "$running_containers" | grep -q 'alm_arm64\|alm_amd64'; then
+                if echo "$running_containers" | grep -q 'alm_telemetry'; then
+                    ((completed++))
+                fi
+            fi
+        fi
+    else
+        # For almuser: use curl/wget localhost:80 as indicator
+        if command -v curl &>/dev/null; then
+            if curl -f -s -o /dev/null localhost:80 2>/dev/null; then
+                ((completed++))
+            fi
+        elif command -v wget &>/dev/null; then
+            if wget -q -O /dev/null --timeout=2 localhost:80 2>/dev/null; then
                 ((completed++))
             fi
         fi
@@ -150,30 +194,40 @@ get_current_step() {
         return
     fi
 
-    if command -v docker &>/dev/null; then
-        # Check if all required images are pulled
-        if ! docker image inspect \
-            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:latest \
-            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:latest \
-            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-telemetry/alm-telemetry:latest \
-            >/dev/null 2>&1; then
-            echo "Pulling Docker images (this may take 3-5 minutes)..."
-            return
-        fi
-    fi
-
-    if command -v docker &>/dev/null; then
-        local running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null)
-        # Check if both main and telemetry containers are running
-        if echo "$running_containers" | grep -q 'alm_arm64\|alm_amd64'; then
-            if echo "$running_containers" | grep -q 'alm_telemetry'; then
-                # Both running = setup complete
-                echo "Setup complete!"
+    # Image and container checks - only for almadmin and root
+    local current_user
+    current_user=$(whoami)
+    if [[ "$current_user" == "almadmin" || "$current_user" == "root" ]]; then
+        if command -v docker &>/dev/null; then
+            # Check if all required images are pulled
+            if ! docker image inspect \
+                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:latest \
+                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:latest \
+                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-telemetry/alm-telemetry:latest \
+                >/dev/null 2>&1; then
+                echo "Pulling Docker images (this may take 3-5 minutes)..."
                 return
             fi
         fi
-        # If we get here, containers are not fully running yet
-        echo "Starting ALM containers..."
+
+        if command -v docker &>/dev/null; then
+            local running_containers
+            running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null || echo "")
+            # Check if both main and telemetry containers are running
+            if echo "$running_containers" | grep -q 'alm_arm64\|alm_amd64'; then
+                if echo "$running_containers" | grep -q 'alm_telemetry'; then
+                    # Both running = setup complete
+                    echo "Setup complete!"
+                    return
+                fi
+            fi
+            # If we get here, containers are not fully running yet
+            echo "Starting ALM containers..."
+            return
+        fi
+    else
+        # For almuser: show simplified message
+        echo "Finalizing setup (waiting for service to start)..."
         return
     fi
 
@@ -220,9 +274,9 @@ EOF
         echo -e "${GREEN}✅ Setup Complete!${NC}"
         echo ""
         echo "Your device is now ready. Available commands:"
-        echo "  ${BLUE}alm status${NC}   - Check device and container status"
-        echo "  ${BLUE}alm logs${NC}     - View container logs"
-        echo "  ${BLUE}alm help${NC}     - Show all available commands"
+        echo -e "  ${BLUE}alm status${NC}   - Check device and container status"
+        echo -e "  ${BLUE}alm logs${NC}     - View container logs"
+        echo -e "  ${BLUE}alm help${NC}     - Show all available commands"
         echo ""
 
         # Setup is complete - rely on container detection, no flag file needed
@@ -238,30 +292,40 @@ EOF
         fi
         echo ""
         echo "You can:"
-        echo "  • Wait here and watch progress"
-        echo "  • Log out and check back later (${BLUE}ssh almuser@device-ip${NC})"
-        echo "  • Monitor detailed logs: ${BLUE}alm pull -f${NC}"
+        echo "  • Wait here and watch progress (updates every 3 seconds)"
+        echo -e "  • Log out and check back later (${BLUE}ssh almuser@device-ip${NC})"
+        echo -e "  • Monitor detailed logs: ${BLUE}alm logs init${NC}"
         echo ""
-        echo -e "${GRAY}This screen updates automatically. Press Ctrl+C to exit.${NC}"
+        echo -e "${GRAY}Press Ctrl+C to exit this monitoring screen${NC}"
     fi
 }
 
 # Main execution
 main() {
-    # Skip if setup is already complete
-    if is_setup_complete; then
-        exit 0
-    fi
+    # Continuous monitoring loop
+    # Checks setup completion (including curl localhost:80) every few seconds
+    # For almadmin/root: also monitors Docker image pulls and container status
+    # For almuser: relies on curl localhost:80 check (no Docker access needed)
 
-    # Show progress
-    display_progress
+    while true; do
+        # Check if setup is complete
+        # This includes curl localhost:80 check (works for all users)
+        # and Docker container checks (only for almadmin/root)
+        if is_setup_complete; then
+            # Show final success screen
+            clear
+            display_progress
+            exit 0
+        fi
 
-    # If not complete, offer to auto-refresh
-    if [ "$(get_setup_progress)" -ne 100 ]; then
-        echo ""
-        read -t 5 -p "Auto-refresh in 5 seconds (or press Enter now)..." || true
-        exec "$0" "$@"
-    fi
+        # Show current progress
+        clear
+        display_progress
+
+        # Wait before checking again (3 seconds)
+        # Allow user to exit with Ctrl+C
+        sleep 3
+    done
 }
 
 # Only run if called directly (not sourced)
