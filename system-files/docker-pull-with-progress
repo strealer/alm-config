@@ -106,10 +106,10 @@ can_use_docker_api() {
     return 0
 }
 
-# Fallback to standard docker pull
-fallback_docker_pull() {
+# Standard docker pull with logging (respects docker login creds)
+cli_docker_pull() {
     log "=========================================="
-    log "📦 PULLING IMAGE (standard mode)"
+    log "📦 PULLING IMAGE (docker CLI)"
     log "=========================================="
     log "Image: $IMAGE"
     log "Method: docker pull CLI"
@@ -312,13 +312,20 @@ log "║   DOCKER IMAGE PULL STARTING           ║"
 log "╚════════════════════════════════════════╝"
 log ""
 
-# Try Docker API first, fallback to standard pull
-if can_use_docker_api; then
-    docker_api_pull
-    EXIT_CODE=$?
+USE_DOCKER_API=${USE_DOCKER_API:-0}
+EXIT_CODE=0
+
+if [ "$USE_DOCKER_API" -eq 1 ]; then
+    if can_use_docker_api; then
+        docker_api_pull
+        EXIT_CODE=$?
+    else
+        log "Docker API unavailable, falling back to docker CLI..."
+        cli_docker_pull
+        EXIT_CODE=$?
+    fi
 else
-    log "Falling back to standard docker pull..."
-    fallback_docker_pull
+    cli_docker_pull
     EXIT_CODE=$?
 fi
 
