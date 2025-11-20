@@ -146,7 +146,10 @@ docker_api_pull() {
     declare -A layer_status
     total_layers=0
     completed_layers=0
-    auth_error=0
+    
+    # Use temp file to track auth errors (avoid subshell variable scope issue)
+    auth_error_file=$(mktemp)
+    echo "0" > "$auth_error_file"
 
     # Track last progress update time per layer to avoid spam
     declare -A last_update_time
@@ -164,7 +167,7 @@ docker_api_pull() {
         if echo "$json_line" | grep -q '"message".*\(denied\|Unauthenticated\|unauthorized\|authentication required\)'; then
             error_msg=$(echo "$json_line" | grep -oP '"message":"\K[^"]+' 2>/dev/null || echo "Authentication failed")
             log "❌ AUTHENTICATION ERROR: $error_msg"
-            auth_error=1
+            echo "1" > "$auth_error_file"
             break
         fi
 
@@ -270,6 +273,10 @@ docker_api_pull() {
     done
 
     EXIT_CODE=${PIPESTATUS[0]}
+
+    # Check if authentication error was detected (read from temp file)
+    auth_error=$(cat "$auth_error_file" 2>/dev/null || echo "0")
+    rm -f "$auth_error_file"
 
     # Override exit code if authentication error detected
     if [ "$auth_error" -eq 1 ]; then
