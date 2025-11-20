@@ -23,7 +23,6 @@ set -euo pipefail
 # State files
 SETUP_COMPLETE_FLAG="/var/lib/alm/setup_complete"
 SETUP_STATE_DIR="/var/lib/alm/setup_state"
-DOCKER_PULL_LOG="/var/log/alm/docker-pull.log"
 PUPPET_LAST_RUN="/opt/puppetlabs/puppet/cache/state/last_run_report.yaml"
 
 # Colors
@@ -104,9 +103,14 @@ get_setup_progress() {
         ((completed++))
     fi
 
-    # Step 5: Docker images pulled
+    # Step 5: Docker images pulled (check all required images exist)
     if command -v docker &>/dev/null; then
-        if docker images | grep -q 'alm-init\|alm-app'; then
+        # Check if all three required images exist locally
+        if docker image inspect \
+            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:latest \
+            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:latest \
+            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-telemetry/alm-telemetry:latest \
+            >/dev/null 2>&1; then
             ((completed++))
         fi
     fi
@@ -147,15 +151,13 @@ get_current_step() {
     fi
 
     if command -v docker &>/dev/null; then
-        if ! docker images | grep -q 'alm-init\|alm-app'; then
-            # Check if actively pulling
-            if [ -f "$DOCKER_PULL_LOG" ]; then
-                if tail -n 5 "$DOCKER_PULL_LOG" 2>/dev/null | grep -q "Downloading\|Extracting"; then
-                    echo "Pulling Docker images (this may take 3-5 minutes)..."
-                    return
-                fi
-            fi
-            echo "Waiting for Docker image pull to start..."
+        # Check if all required images are pulled
+        if ! docker image inspect \
+            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:latest \
+            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:latest \
+            europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-telemetry/alm-telemetry:latest \
+            >/dev/null 2>&1; then
+            echo "Pulling Docker images (this may take 3-5 minutes)..."
             return
         fi
     fi
@@ -178,28 +180,8 @@ get_current_step() {
     echo "Setup complete!"
 }
 
-# Show detailed docker pull progress if actively pulling
-show_docker_pull_progress() {
-    if [ ! -f "$DOCKER_PULL_LOG" ]; then
-        return
-    fi
-
-    # Check if pull is active (within last 10 seconds)
-    local log_age=0
-    if [ -f "$DOCKER_PULL_LOG" ]; then
-        # Use stat -c for Linux (Raspberry Pi), -f for macOS
-        log_age=$(( $(date +%s) - $(stat -c %Y "$DOCKER_PULL_LOG" 2>/dev/null || stat -f %m "$DOCKER_PULL_LOG" 2>/dev/null || echo 0) ))
-    fi
-
-    if [ "$log_age" -lt 10 ]; then
-        # Show last few progress lines
-        echo ""
-        echo -e "${BLUE}Docker Pull Progress:${NC}"
-        tail -n 3 "$DOCKER_PULL_LOG" 2>/dev/null | grep -E "⬇️|📂|✅|💾" | while read -r line; do
-            echo "  $line"
-        done
-    fi
-}
+# Docker pull progress tracking removed - Puppet handles pulls
+# Progress detection now uses simple image existence checks (more reliable)
 
 # Display setup progress
 display_progress() {
@@ -230,10 +212,6 @@ EOF
     echo ""
     echo -e "${YELLOW}Current Step:${NC} $current_step"
     echo ""
-
-    # Show detailed progress for docker pulls
-    show_docker_pull_progress
-
     echo ""
     echo -e "${GRAY}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
