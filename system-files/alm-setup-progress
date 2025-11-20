@@ -247,9 +247,8 @@ EOF
         echo "  ${BLUE}alm help${NC}     - Show all available commands"
         echo ""
 
-        # Mark setup as complete
-        sudo mkdir -p "$(dirname "$SETUP_COMPLETE_FLAG")" 2>/dev/null || true
-        sudo touch "$SETUP_COMPLETE_FLAG" 2>/dev/null || true
+        # Setup is complete - rely on container detection, no flag file needed
+        # Container detection in is_setup_complete() handles future login checks
     else
         echo -e "${YELLOW}⏳ Setup in progress...${NC}"
         echo ""
