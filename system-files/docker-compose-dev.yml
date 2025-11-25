@@ -97,17 +97,16 @@ services:
     cpus: 1.0
     
     volumes:
+      # Docker socket for container logs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Log file access - nginx logs from alm_* containers
+      - /var/log/nginx:/var/log/nginx:ro
       # Vector configuration
       # Prod: Config distributed by Puppet to host path
-      - /opt/alm/config/vector.toml:/etc/vector/vector.toml:ro
-      
+      - /opt/alm/config/vector.yaml:/etc/vector/vector.yaml:ro
       # Data directory for disk buffering
       - alm_vector_data:/var/lib/vector:rw
       
-      # Log file access - nginx logs from alm_* containers
-      - /var/log/nginx:/var/log/nginx:ro
-      
-      # Docker socket for container logs
       - /var/run/docker.sock:/var/run/docker.sock:ro
       
       # Journald for system logs
