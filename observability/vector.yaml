@@ -52,6 +52,7 @@ transforms:
     reroute_dropped: true
     source: |
       message = string!(.message)
+      .source_type = "nginx_access"
       
       # Try Custom Format (FT/BK)
       if starts_with(message, "FT") || starts_with(message, "BK") {
