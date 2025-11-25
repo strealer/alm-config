@@ -82,6 +82,69 @@ services:
     restart: unless-stopped # Cron runner should always stay online
 
   # ========================================================================
+  # OBSERVABILITY: VECTOR LOG COLLECTOR
+  # ========================================================================
+  
+  # Vector log collector - ships logs to central Loki instance
+  # Collects nginx logs, docker container logs, and system logs
+  alm_vector:
+    image: timberio/vector:0.34.1-alpine
+    container_name: alm_vector
+    
+    # Resource limits for Raspberry Pi 4
+    mem_limit: 512m
+    mem_reservation: 256m
+    cpus: 1.0
+    
+    volumes:
+      # Vector configuration
+      # Prod: Config will be in alm_config volume (distributed by Puppet/Init)
+      - alm_config:/opt/alm/config:ro
+      
+      # Data directory for disk buffering
+      - alm_vector_data:/var/lib/vector:rw
+      
+      # Log file access - nginx logs from alm_* containers
+      - /var/log/nginx:/var/log/nginx:ro
+      
+      # Docker socket for container logs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      
+      # Journald for system logs
+      - /var/log/journal:/var/log/journal:ro
+      - /run/systemd/journal:/run/systemd/journal:ro
+      
+    environment:
+      # Loki endpoint - set via .env file or override in production
+      - LOKI_ENDPOINT=${LOKI_ENDPOINT:-http://104.155.91.159:3100}
+      - PROMETHEUS_ENDPOINT=${PROMETHEUS_ENDPOINT:-http://104.155.91.159:9090}
+      - VECTOR_LOG=info
+      # Reduce worker threads for Raspberry Pi (4 cores = 2 threads recommended for background)
+      - VECTOR_THREADS=2
+      # In production, if using alm_config volume:
+      # - VECTOR_CONFIG=/opt/alm/config/observability/vector.toml
+      
+    ports:
+      - "8686:8686"  # Vector API for health checks
+      - "9598:9598"  # Prometheus metrics endpoint
+      
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8686/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+      
+    # Vector should start after main app is running
+    depends_on:
+      - alm_telemetry
+      
+    # Prevent OOM killer from targeting Vector
+    oom_score_adj: -500
+
+  # ========================================================================
   # PHASE 2: MAIN ALM APPLICATION CONTAINERS
   # ========================================================================
 
@@ -141,6 +204,8 @@ volumes:
   # Persistent data volume for device-specific information
   # Docker-managed named volume - no host directories needed!
   alm_persist:
+  # Vector data volume for disk buffering
+  alm_vector_data:
 
 # ============================================================================
 # DEPLOYMENT NOTES - DEVELOPMENT ENVIRONMENT
