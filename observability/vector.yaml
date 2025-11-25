@@ -125,6 +125,10 @@ transforms:
       .device_hostname = get_hostname!()
       .device_role = "alm-edge"
       .environment = "production"
+      
+      if !exists(.cache_status) {
+        .cache_status = "N/A"
+      }
 
   # Generate metrics from logs (for Prometheus)
   log_metrics:
