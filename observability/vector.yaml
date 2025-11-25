@@ -150,8 +150,26 @@ transforms:
             event.log.cache_status = "N/A"
           end
           
-          -- IP fields are already parsed by the JSON codec in the source
-          -- No manual parsing needed here
+          -- Ensure IP fields are available for labels
+          -- Check if fields exist (from codec), otherwise parse from message
+          if not event.log.public_ip or not event.log.local_ip then
+             local message = event.log.message
+             if message then
+               local public_ip = string.match(message, '"public_ip":%s*"([^"]+)"')
+               local local_ip = string.match(message, '"local_ip":%s*"([^"]+)"')
+               
+               if public_ip and not event.log.public_ip then
+                 event.log.public_ip = public_ip
+               end
+               if local_ip and not event.log.local_ip then
+                 event.log.local_ip = local_ip
+               end
+             end
+          end
+          
+          -- Default to empty string if still missing to prevent label errors
+          if not event.log.public_ip then event.log.public_ip = "" end
+          if not event.log.local_ip then event.log.local_ip = "" end
           
           
           emit(event)
