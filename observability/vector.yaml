@@ -55,7 +55,7 @@ sources:
   # Collect IP information (Local and Public)
   ip_info:
     type: "exec"
-    command: ["/bin/sh", "-c", "echo \"{\\\"public_ip\\\": \\\"$(wget -qO- checkip.amazonaws.com)\\\", \\\"local_ip\\\": \\\"$(ip route get 1.1.1.1 | awk '{print $7}')\\\"}\""]
+    command: ["/bin/sh", "-c", "echo \"{\\\"public_ip\\\": \\\"$(wget -qO- checkip.amazonaws.com)\\\", \\\"local_ip\\\": \\\"$(ip route get 1.1.1.1 | sed -n 's/.*src \\([^ ]*\\).*/\\1/p')\\\"}\""]
     mode: "scheduled"
     scheduled:
       exec_interval_secs: 3600  # Run every hour
@@ -151,7 +151,9 @@ transforms:
           end
           
           -- Extract IP fields from ip_info JSON message
-          if event.log.source == "ip_info" or event.log.source_type == "exec" then
+          -- Vector's exec source sets source_type="exec"
+          local source_type = event.log.source_type
+          if source_type == "exec" then
             local message = event.log.message
             if message then
               -- Parse JSON message for public_ip and local_ip
