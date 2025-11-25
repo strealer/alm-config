@@ -106,9 +106,6 @@ services:
       # Docker socket for container logs
       - /var/run/docker.sock:/var/run/docker.sock:ro
       
-      # Host hostname for device identification
-      - /etc/hostname:/host/hostname:ro
-      
       # Journald for system logs
       - /var/log/journal:/var/log/journal:ro
       - /run/systemd/journal:/run/systemd/journal:ro
@@ -120,8 +117,8 @@ services:
       - VECTOR_LOG=info
       # Reduce worker threads for Raspberry Pi (4 cores = 2 threads recommended for background)
       - VECTOR_THREADS=2
-      # In production, if using alm_config volume:
-      # - VECTOR_CONFIG=/opt/alm/config/observability/vector.toml
+      # Host hostname for device identification (will be set by Puppet)
+      - HOST_HOSTNAME=${HOST_HOSTNAME:-unknown}
       
     ports:
       - "8686:8686"  # Vector API for health checks

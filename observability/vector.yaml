@@ -135,19 +135,15 @@ transforms:
     type: remap
     inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs"]
     source: |
-      # Read host hostname from mounted file (rpi4-14b52e5c-20251124122742)
-      hostname, err = read_file("/host/hostname")
-      if err == null {
-        hostname = strip_whitespace(hostname)
-        parts = split(hostname, "-")
-        if length(parts) >= 2 {
-          .device_hostname = parts[1]  # Serial number (middle part: 14b52e5c)
-        } else {
-          .device_hostname = hostname  # Fallback to full hostname
-        }
+      # Read host hostname from environment variable (set by docker-compose)
+      hostname = get_env_var("HOST_HOSTNAME") ?? get_hostname!()
+      
+      # Extract serial number from hostname (rpi4-14b52e5c-20251124122742 -> 14b52e5c)
+      parts = split(hostname, "-")
+      if length(parts) >= 2 {
+        .device_hostname = parts[1]  # Serial number (middle part: 14b52e5c)
       } else {
-        # Fallback to container hostname if file read fails
-        .device_hostname = get_hostname!()
+        .device_hostname = hostname  # Fallback to full hostname
       }
       
       .device_role = "alm-edge"
