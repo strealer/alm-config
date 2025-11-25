@@ -159,6 +159,24 @@ transforms:
         .cache_status = "N/A"
       }
 
+  # Enrich host metrics with correct hostname from mounted file
+  enrich_host_metrics:
+    type: remap
+    inputs: ["host_metrics"]
+    source: |
+      # Read host hostname from mounted file
+      hostname_file, err = read_file("/etc/hostname")
+      if err == null {
+        hostname = strip_whitespace(hostname_file)
+        # Extract serial number
+        parts = split(hostname, "-")
+        if length(parts) >= 2 {
+          .tags.host = parts[1]
+        } else {
+          .tags.host = hostname
+        }
+      }
+
   # Generate metrics from logs (for Prometheus)
   log_metrics:
     type: log_to_metric
@@ -222,7 +240,7 @@ sinks:
   # Metrics: Push to Prometheus (Remote Write)
   prometheus_remote_write:
     type: prometheus_remote_write
-    inputs: ["log_metrics", "vector_metrics", "host_metrics"]  # Send generated metrics + internal + host metrics
+    inputs: ["log_metrics", "vector_metrics", "enrich_host_metrics"]  # Send generated metrics + internal + enriched host metrics
     endpoint: "${PROMETHEUS_ENDPOINT:-http://your-prometheus:9090}/api/v1/write"
     default_namespace: "strealer"
     healthcheck:
@@ -231,6 +249,6 @@ sinks:
   # Expose metrics locally for scraping (optional backup)
   prometheus_exporter:
     type: prometheus_exporter
-    inputs: ["log_metrics", "vector_metrics", "host_metrics"]
+    inputs: ["log_metrics", "vector_metrics", "enrich_host_metrics"]
     address: "0.0.0.0:9598"
     default_namespace: "strealer"
