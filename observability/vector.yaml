@@ -1,27 +1,22 @@
 # Vector configuration for Strealer ALM edge devices
 # Optimized for Raspberry Pi 4 (Resource Constrained)
-
 api:
   enabled: true
   address: "0.0.0.0:8686"
-
 # ============================================================================
 # SOURCES
 # ============================================================================
-
 sources:
   nginx_access:
     type: file
     include: ["/var/log/nginx/access*.log"]
     read_from: end
     max_line_bytes: 102400
-
   nginx_error:
     type: file
     include: ["/var/log/nginx/error*.log"]
     read_from: end
     max_line_bytes: 102400
-
   docker_containers:
     type: docker_logs
     docker_host: "unix:///var/run/docker.sock"
@@ -29,43 +24,37 @@ sources:
     exclude_containers: []
     partial_event_marker_field: "_partial"
     auto_partial_merge: true
-
   system_logs:
     type: journald
     include_units: ["docker", "systemd"]
-
   # Internal Vector metrics for self-monitoring
   vector_metrics:
     type: internal_metrics
     namespace: vector
-
   # Host system metrics (CPU, Memory, Disk, Network)
   host_metrics:
     type: host_metrics
     collectors:
-      - cpu           # CPU usage per core and total
-      - memory        # Memory usage (used, available, free, cached)
-      - disk          # Disk I/O statistics
-      - filesystem    # Filesystem usage per mount point
-      - network       # Network I/O per interface
-      - load          # System load averages (1m, 5m, 15m)
+      - cpu # CPU usage per core and total
+      - memory # Memory usage (used, available, free, cached)
+      - disk # Disk I/O statistics
+      - filesystem # Filesystem usage per mount point
+      - network # Network I/O per interface
+      - load # System load averages (1m, 5m, 15m)
     scrape_interval_secs: 15
     namespace: host
-
   # Collect IP information (Local and Public)
   ip_info:
     type: "exec"
-    command: ["/bin/sh", "-c", "echo \"{\\\"public_ip\\\": \\\"$(wget -qO- checkip.amazonaws.com)\\\", \\\"local_ip\\\": \\\"$(ip route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++)if($i==\"src\")print $(i+1)}')\\\"}\""]
+    command: ["/bin/sh", "-c", "echo \"{\\\"public_ip\\\": \\\"$(wget -qO- checkip.amazonaws.com 2>/dev/null)\\\", \\\"local_ip\\\": \\\"$(ip route get 1.1.1.1 2>/dev/null | grep -oE 'src [0-9.]+' | cut -d' ' -f2)\\\"}\""]
     mode: "scheduled"
     scheduled:
-      exec_interval_secs: 300  # Run every 5 minutes (lightweight command, minimal overhead)
+      exec_interval_secs: 300 # Run every 5 minutes (lightweight command, minimal overhead)
     decoding:
       codec: "json"
-
 # ============================================================================
 # TRANSFORMS
 # ============================================================================
-
 transforms:
   # Optimize Nginx parsing for CPU efficiency
   parse_nginx_access:
@@ -73,108 +62,19 @@ transforms:
     inputs: ["nginx_access"]
     drop_on_error: true
     reroute_dropped: true
-    source: |
-      message = string!(.message)
-      .source_type = "nginx_access"
-      
-      # Parse nginx custom log format
-      # Format: "FT | $time_iso8601 | $status | $request | $upstream_cache_status | $body_bytes_sent"
-      parsed, err = parse_regex(message, r'^(?P<log_type>[A-Z]+) \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<cache_status>[^|]+) \| (?P<bytes>\d+)$')
-      
-      if err == null {
-        .log_type = parsed.log_type
-        .timestamp = parse_timestamp!(parsed.timestamp, "%Y-%m-%dT%H:%M:%S%z")
-        .status = to_int!(parsed.status)
-        .request = parsed.request
-        .cache_status = parsed.cache_status
-        .bytes_sent = to_int!(parsed.bytes)
-        
-        # Extract request method and path
-        request_parts = split!(parsed.request, " ", limit: 3)
-        .method = request_parts[0]
-        .path = request_parts[1]
-        .http_version = request_parts[2]
-        
-        # Categorize by cache type
-        if contains(string!(.path), "/media") {
-          .cache_type = "media"
-        } else if contains(string!(.path), "/player") {
-          .cache_type = "player"
-        } else if contains(string!(.path), "/renderer") {
-          .cache_type = "renderer"
-        } else {
-          .cache_type = "other"
-        }
-      }
+    source: "message = string!(.message)\n.source_type = \"nginx_access\"\n\n# Parse nginx custom log format\n# Format: \"FT | $time_iso8601 | $status | $request | $upstream_cache_status | $body_bytes_sent\"\nparsed, err = parse_regex(message, r'^(?P<log_type>[A-Z]+) \\| (?P<timestamp>[^ ]+) \\| (?P<status>\\d+) \\| (?P<request>[^|]+) \\| (?P<cache_status>[^|]+) \\| (?P<bytes>\\d+)$')\n\nif err == null {\n  .log_type = parsed.log_type\n  .timestamp = parse_timestamp!(parsed.timestamp, \"%Y-%m-%dT%H:%M:%S%z\")\n  .status = to_int!(parsed.status)\n  .request = parsed.request\n  .cache_status = parsed.cache_status\n  .bytes_sent = to_int!(parsed.bytes)\n  \n  # Extract request method and path\n  request_parts = split!(parsed.request, \" \", limit: 3)\n  .method = request_parts[0]\n  .path = request_parts[1]\n  .http_version = request_parts[2]\n  \n  # Categorize by cache type\n  if contains(string!(.path), \"/media\") {\n    .cache_type = \"media\"\n  } else if contains(string!(.path), \"/player\") {\n    .cache_type = \"player\"\n  } else if contains(string!(.path), \"/renderer\") {\n    .cache_type = \"renderer\"\n  } else {\n    .cache_type = \"other\"\n  }\n}\n"
   # Sampling for high-volume logs (keep every 10th success)
   sample_nginx_access:
     type: sample
     inputs: ["parse_nginx_access"]
     rate: 10
-
   # Add device metadata (using Lua for consistency and file reading)
   add_metadata:
     type: lua
     inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "ip_info"]
     version: "2"
     hooks:
-      process: |
-        function (event, emit)
-          -- Lazy load hostname from file
-          if not _G.device_hostname then
-            local f = io.open("/etc/hostname", "r")
-            if f then
-              local content = f:read("*all")
-              f:close()
-              content = content:gsub("%s+", "")
-              local parts = {}
-              for part in string.gmatch(content, "[^-]+") do
-                table.insert(parts, part)
-              end
-              if #parts >= 2 then
-                _G.device_hostname = parts[2]
-              else
-                _G.device_hostname = content
-              end
-            else
-              _G.device_hostname = "unknown"
-            end
-          end
-
-          if _G.device_hostname then
-            event.log.device_hostname = _G.device_hostname
-          end
-          event.log.device_role = "alm-edge"
-          event.log.environment = "production"
-          if not event.log.cache_status then
-            event.log.cache_status = "N/A"
-          end
-          
-          -- Ensure IP fields are available for labels
-          -- Check if fields exist (from codec), otherwise parse from message
-          if not event.log.public_ip or not event.log.local_ip then
-             local message = event.log.message
-             if message then
-               local public_ip = string.match(message, '"public_ip":%s*"([^"]+)"')
-               local local_ip = string.match(message, '"local_ip":%s*"([^"]+)"')
-               
-               if public_ip and not event.log.public_ip then
-                 event.log.public_ip = public_ip
-               end
-               if local_ip and not event.log.local_ip then
-                 event.log.local_ip = local_ip
-               end
-             end
-          end
-          
-          -- Default to empty string if still missing to prevent label errors
-          if not event.log.public_ip then event.log.public_ip = "" end
-          if not event.log.local_ip then event.log.local_ip = "" end
-          
-          
-          emit(event)
-        end
-
+      process: "function (event, emit)\n  -- Lazy load hostname from file\n  if not _G.device_hostname then\n    local f = io.open(\"/etc/hostname\", \"r\")\n    if f then\n      local content = f:read(\"*all\")\n      f:close()\n      content = content:gsub(\"%s+\", \"\")\n      local parts = {}\n      for part in string.gmatch(content, \"[^-]+\") do\n        table.insert(parts, part)\n      end\n      if #parts >= 2 then\n        _G.device_hostname = parts[2]\n      else\n        _G.device_hostname = content\n      end\n    else\n      _G.device_hostname = \"unknown\"\n    end\n  end\n\n  if _G.device_hostname then\n    event.log.device_hostname = _G.device_hostname\n  end\n  event.log.device_role = \"alm-edge\"\n  event.log.environment = \"production\"\n  if not event.log.cache_status then\n    event.log.cache_status = \"N/A\"\n  end\n  \n  -- Ensure IP fields are available for labels\n  -- Check if fields exist (from codec), otherwise parse from message\n  if not event.log.public_ip or not event.log.local_ip then\n     local message = event.log.message\n     if message then\n       local public_ip = string.match(message, '\"public_ip\":%s*\"([^\"]+)\"')\n       local local_ip = string.match(message, '\"local_ip\":%s*\"([^\"]+)\"')\n       \n       if public_ip and not event.log.public_ip then\n         event.log.public_ip = public_ip\n       end\n       if local_ip and not event.log.local_ip then\n         event.log.local_ip = local_ip\n       end\n     end\n  end\n  \n  -- Default to empty string if still missing to prevent label errors\n  if not event.log.public_ip then event.log.public_ip = \"\" end\n  if not event.log.local_ip then event.log.local_ip = \"\" end\n  \n  \n  emit(event)\nend\n"
   # Enrich host metrics with correct hostname from mounted file (using Lua since VRL can't read files)
   enrich_host_metrics:
     type: lua
@@ -211,7 +111,6 @@ transforms:
           -- print("Processing metric: " .. (event.metric.name or "unknown"))
           emit(event)
         end
-
   # Generate metrics from logs (for Prometheus)
   log_metrics:
     type: log_to_metric
@@ -225,11 +124,9 @@ transforms:
           status: "{{ status }}"
           method: "{{ method }}"
           cache_status: "{{ cache_status }}"
-
 # ============================================================================
 # SINKS
 # ============================================================================
-
 sinks:
   loki:
     type: loki
@@ -240,7 +137,6 @@ sinks:
     healthcheck:
       enabled: true
     compression: snappy
-    
     # Reduced label cardinality for Loki performance
     labels:
       device: "{{ device_hostname }}"
@@ -250,39 +146,33 @@ sinks:
       cache_status: "{{ cache_status }}"
       public_ip: "{{ public_ip }}"
       local_ip: "{{ local_ip }}"
-    
     # Disk buffering for edge resilience
     buffer:
       type: disk
-      max_size: 283115520  # 270MB (increased from 256MB to satisfy min requirement)
+      max_size: 283115520 # 270MB (increased from 256MB to satisfy min requirement)
       when_full: block
-    
     # Optimized batching for edge
     batch:
-      max_bytes: 262144  # 256KB
+      max_bytes: 262144 # 256KB
       timeout_secs: 15
       max_events: 1000
-    
     # Request limits
     request:
       timeout_secs: 30
       rate_limit_num: 100
       rate_limit_duration_secs: 1
       retry_attempts: 5
-    
     # Data durability
     acknowledgements:
       enabled: true
-
   # Metrics: Push to Prometheus (Remote Write)
   prometheus_remote_write:
     type: prometheus_remote_write
-    inputs: ["log_metrics", "vector_metrics", "enrich_host_metrics"]  # Send generated metrics + internal + enriched host metrics
+    inputs: ["log_metrics", "vector_metrics", "enrich_host_metrics"] # Send generated metrics + internal + enriched host metrics
     endpoint: "${PROMETHEUS_ENDPOINT:-http://your-prometheus:9090}/api/v1/write"
     default_namespace: "strealer"
     healthcheck:
       enabled: true
-
   # Expose metrics locally for scraping (optional backup)
   prometheus_exporter:
     type: prometheus_exporter
