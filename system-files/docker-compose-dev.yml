@@ -98,8 +98,8 @@ services:
     
     volumes:
       # Vector configuration
-      # Prod: Config will be in alm_config volume (distributed by Puppet/Init)
-      - alm_config:/opt/alm/config:ro
+      # Prod: Config distributed by Puppet to host path
+      - /opt/alm/config/vector.toml:/etc/vector/vector.toml:ro
       
       # Data directory for disk buffering
       - alm_vector_data:/var/lib/vector:rw
