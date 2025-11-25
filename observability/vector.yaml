@@ -90,7 +90,7 @@ transforms:
         .bytes_sent = to_int!(parsed.bytes)
         
         # Extract request method and path
-        request_parts = split(parsed.request, " ", limit: 3)
+        request_parts = split!(parsed.request, " ", limit: 3)
         .method = request_parts[0]
         .path = request_parts[1]
         .http_version = request_parts[2]
