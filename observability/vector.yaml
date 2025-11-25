@@ -52,6 +52,16 @@ sources:
     scrape_interval_secs: 15
     namespace: host
 
+  # Collect IP information (Local and Public)
+  ip_info:
+    type: "exec"
+    command: ["/bin/sh", "-c", "echo \"{\\\"public_ip\\\": \\\"$(wget -qO- ifconfig.me)\\\", \\\"local_ip\\\": \\\"$(ip route get 1.1.1.1 | awk '{print $7}')\\\"}\""]
+    mode: "scheduled"
+    scheduled:
+      exec_interval_secs: 3600  # Run every hour
+    decoding:
+      codec: "json"
+
 # ============================================================================
 # TRANSFORMS
 # ============================================================================
@@ -87,7 +97,7 @@ transforms:
         
         # Common parsing for custom format
       # Parse nginx custom log format
-      # Format: "FT | $time_iso8601 | $status | $request | $upstream_cache_status | $body_bytes_sent"
+      # Format: "FT | $time_iso_01 | $status | $request | $upstream_cache_status | $body_bytes_sent"
       parsed, err = parse_regex(.message, r'^(?P<log_type>[A-Z]+) \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<cache_status>[^|]+) \| (?P<bytes>\d+)$')
       
       if err == null {
@@ -124,7 +134,7 @@ transforms:
   # Add device metadata (using Lua for consistency and file reading)
   add_metadata:
     type: lua
-    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "ip_info"]
+    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs"]
     version: "2"
     hooks:
       process: |
