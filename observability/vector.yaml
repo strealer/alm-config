@@ -131,51 +131,81 @@ transforms:
     inputs: ["parse_nginx_access"]
     rate: 10
 
+  # Add device metadata (using Lua for consistency and file reading)
   add_metadata:
-    type: remap
+    type: lua
     inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs"]
-    source: |
-      # Read host hostname from mounted file
-      hostname_file, err = read_file("/etc/hostname")
-      if err == null {
-        hostname = strip_whitespace(hostname_file)
-      } else {
-        # Fallback to container hostname
-        hostname = get_hostname!()
-      }
+    version: "2"
+    hooks:
+      init: |
+        -- Read hostname from file once at startup
+        local f = io.open("/etc/hostname", "r")
+        if f then
+          local content = f:read("*all")
+          f:close()
+          content = content:gsub("%s+", "")
+          local parts = {}
+          for part in string.gmatch(content, "[^-]+") do
+            table.insert(parts, part)
+          end
+          if #parts >= 2 then
+            _G.device_hostname = parts[2]
+          else
+            _G.device_hostname = content
+          end
+        else
+          _G.device_hostname = nil
+        end
 
-      # Extract serial number from hostname (rpi4-14b52e5c-20251124122742 -> 14b52e5c)
-      parts = split(hostname, "-")
-      if length(parts) >= 2 {
-        .device_hostname = parts[1]  # Serial number (middle part: 14b52e5c)
-      } else {
-        .device_hostname = hostname  # Fallback to full hostname
-      }
-      
-      .device_role = "alm-edge"
-      .environment = "production"
-      
-      if !exists(.cache_status) {
-        .cache_status = "N/A"
-      }
+      process: |
+        function (event, emit)
+          if _G.device_hostname then
+            event.log.device_hostname = _G.device_hostname
+          end
+          event.log.device_role = "alm-edge"
+          event.log.environment = "production"
+          if not event.log.cache_status then
+            event.log.cache_status = "N/A"
+          end
+          emit(event)
+        end
 
-  # Enrich host metrics with correct hostname from mounted file
+  # Enrich host metrics with correct hostname from mounted file (using Lua since VRL can't read files)
   enrich_host_metrics:
-    type: remap
+    type: lua
     inputs: ["host_metrics"]
-    source: |
-      # Read host hostname from mounted file
-      hostname_file, err = read_file("/etc/hostname")
-      if err == null {
-        hostname = strip_whitespace(hostname_file)
-        # Extract serial number
-        parts = split(hostname, "-")
-        if length(parts) >= 2 {
-          .tags.host = parts[1]
-        } else {
-          .tags.host = hostname
-        }
-      }
+    version: "2"
+    hooks:
+      init: |
+        -- Read hostname from file once at startup
+        local f = io.open("/etc/hostname", "r")
+        if f then
+          local content = f:read("*all")
+          f:close()
+          -- Strip whitespace
+          content = content:gsub("%s+", "")
+          -- Extract serial number (rpi4-14b52e5c-20251124122742 -> 14b52e5c)
+          local parts = {}
+          for part in string.gmatch(content, "[^-]+") do
+            table.insert(parts, part)
+          end
+          
+          if #parts >= 2 then
+            _G.device_hostname = parts[2]
+          else
+            _G.device_hostname = content
+          end
+        else
+          _G.device_hostname = nil
+        end
+
+      process: |
+        function (event, emit)
+          if _G.device_hostname then
+            event.metric.tags.host = _G.device_hostname
+          end
+          emit(event)
+        end
 
   # Generate metrics from logs (for Prometheus)
   log_metrics:
