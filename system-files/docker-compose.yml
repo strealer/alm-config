@@ -107,7 +107,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
       # Mount host hostname file (read-only)
-      - /etc/hostname:/host/hostname:ro
+      - /etc/hostname:/etc/hostname:ro
       
       # Journald for system logs
       - /var/log/journal:/var/log/journal:ro

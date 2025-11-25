@@ -136,7 +136,7 @@ transforms:
     inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs"]
     source: |
       # Read host hostname from mounted file
-      hostname_file, err = read_file("/host/hostname")
+      hostname_file, err = read_file("/etc/hostname")
       if err == null {
         hostname = strip_whitespace(hostname_file)
       } else {
