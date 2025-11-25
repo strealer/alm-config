@@ -230,6 +230,8 @@ sinks:
       env: "production"
       log_source: "{{ source_type }}"
       cache_status: "{{ cache_status }}"
+      public_ip: "{{ public_ip }}"
+      local_ip: "{{ local_ip }}"
     
     # Disk buffering for edge resilience
     buffer:
