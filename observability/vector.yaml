@@ -145,7 +145,8 @@ sinks:
       device: "{{ device_hostname }}"
       role: "alm-edge"
       env: "production"
-      log_source: "{{ source_type }}"
+      source: "{{ source_type }}"
+      cache_status: "{{ cache_status }}"
     
     # Disk buffering for edge resilience
     buffer:
