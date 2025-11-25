@@ -39,6 +39,19 @@ sources:
     type: internal_metrics
     namespace: vector
 
+  # Host system metrics (CPU, Memory, Disk, Network)
+  host_metrics:
+    type: host_metrics
+    collectors:
+      - cpu           # CPU usage per core and total
+      - memory        # Memory usage (used, available, free, cached)
+      - disk          # Disk I/O statistics
+      - filesystem    # Filesystem usage per mount point
+      - network       # Network I/O per interface
+      - load          # System load averages (1m, 5m, 15m)
+    scrape_interval_secs: 15
+    namespace: host
+
 # ============================================================================
 # TRANSFORMS
 # ============================================================================
@@ -194,7 +207,7 @@ sinks:
   # Metrics: Push to Prometheus (Remote Write)
   prometheus_remote_write:
     type: prometheus_remote_write
-    inputs: ["log_metrics", "vector_metrics"]  # Send generated metrics + internal metrics
+    inputs: ["log_metrics", "vector_metrics", "host_metrics"]  # Send generated metrics + internal + host metrics
     endpoint: "${PROMETHEUS_ENDPOINT:-http://your-prometheus:9090}/api/v1/write"
     default_namespace: "strealer"
     healthcheck:
@@ -203,6 +216,6 @@ sinks:
   # Expose metrics locally for scraping (optional backup)
   prometheus_exporter:
     type: prometheus_exporter
-    inputs: ["log_metrics", "vector_metrics"]
+    inputs: ["log_metrics", "vector_metrics", "host_metrics"]
     address: "0.0.0.0:9598"
     default_namespace: "strealer"
