@@ -79,10 +79,10 @@ transforms:
       
       # Extract request parts efficiently
       .request = parsed.request
-      parts = split(parsed.request, " ", limit: 3)
-      .method = parts[0] ?? ""
-      .path = parts[1] ?? ""
-      .http_version = parts[2] ?? ""
+      req_parts = split(string!(parsed.request), " ", limit: 3)
+      .method = req_parts[0] ?? ""
+      .path = req_parts[1] ?? ""
+      .http_version = req_parts[2] ?? ""
       
       # Efficient categorization
       path_lower = downcase(string!(.path))
@@ -150,7 +150,7 @@ sinks:
     # Disk buffering for edge resilience
     buffer:
       type: disk
-      max_size: 268435456  # 256MB
+      max_size: 283115520  # 270MB (increased from 256MB to satisfy min requirement)
       when_full: block
     
     # Optimized batching for edge
