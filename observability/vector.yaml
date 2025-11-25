@@ -55,7 +55,7 @@ sources:
   # Collect IP information (Local and Public)
   ip_info:
     type: "exec"
-    command: ["/bin/sh", "-c", "echo \"{\\\"public_ip\\\": \\\"$(curl -4 -s ifconfig.me)\\\", \\\"local_ip\\\": \\\"$(ip route get 1.1.1.1 | awk '{print $7}')\\\"}\""]
+    command: ["/bin/sh", "-c", "echo \"{\\\"public_ip\\\": \\\"$(wget -qO- checkip.amazonaws.com)\\\", \\\"local_ip\\\": \\\"$(ip route get 1.1.1.1 | awk '{print $7}')\\\"}\""]
     mode: "scheduled"
     scheduled:
       exec_interval_secs: 3600  # Run every hour
