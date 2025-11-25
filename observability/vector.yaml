@@ -101,8 +101,7 @@ transforms:
     type: sample
     inputs: ["parse_nginx_access"]
     rate: 10
-    exclude:
-      status: "2*"  # Keep all non-2xx responses (errors/redirects)
+    exclude: '.status >= 400'  # Keep all error responses (4xx/5xx) passed through unsampled
 
   # Add device metadata
   add_metadata:
