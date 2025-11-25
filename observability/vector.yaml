@@ -80,9 +80,9 @@ transforms:
       # Extract request parts efficiently
       .request = parsed.request
       req_parts = split(string!(parsed.request), " ", limit: 3)
-      .method = req_parts[0] ?? ""
-      .path = req_parts[1] ?? ""
-      .http_version = req_parts[2] ?? ""
+      .method = req_parts[0]
+      .path = req_parts[1]
+      .http_version = req_parts[2]
       
       # Efficient categorization
       path_lower = downcase(string!(.path))
