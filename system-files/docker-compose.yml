@@ -86,7 +86,6 @@ services:
   alm_vector:
     image: timberio/vector:0.34.1-alpine
     container_name: alm_vector
-    hostname: ${HOSTNAME:-vector}  # Inherit hostname from host environment
     
     # Resource limits for Raspberry Pi 4
     mem_limit: 512m
@@ -106,6 +105,9 @@ services:
       
       # Docker socket for container logs
       - /var/run/docker.sock:/var/run/docker.sock:ro
+
+      # Mount host hostname file (read-only)
+      - /etc/hostname:/host/hostname:ro
       
       # Journald for system logs
       - /var/log/journal:/var/log/journal:ro

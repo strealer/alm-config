@@ -135,8 +135,16 @@ transforms:
     type: remap
     inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs"]
     source: |
+      # Read host hostname from mounted file
+      hostname_file, err = read_file("/host/hostname")
+      if err == null {
+        hostname = strip_whitespace(hostname_file)
+      } else {
+        # Fallback to container hostname
+        hostname = get_hostname!()
+      }
+
       # Extract serial number from hostname (rpi4-14b52e5c-20251124122742 -> 14b52e5c)
-      hostname = get_hostname!()
       parts = split(hostname, "-")
       if length(parts) >= 2 {
         .device_hostname = parts[1]  # Serial number (middle part: 14b52e5c)
