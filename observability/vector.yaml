@@ -137,28 +137,29 @@ transforms:
     inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs"]
     version: "2"
     hooks:
-      init: |
-        -- Read hostname from file once at startup
-        local f = io.open("/etc/hostname", "r")
-        if f then
-          local content = f:read("*all")
-          f:close()
-          content = content:gsub("%s+", "")
-          local parts = {}
-          for part in string.gmatch(content, "[^-]+") do
-            table.insert(parts, part)
-          end
-          if #parts >= 2 then
-            _G.device_hostname = parts[2]
-          else
-            _G.device_hostname = content
-          end
-        else
-          _G.device_hostname = nil
-        end
-
       process: |
         function (event, emit)
+          -- Lazy load hostname from file
+          if not _G.device_hostname then
+            local f = io.open("/etc/hostname", "r")
+            if f then
+              local content = f:read("*all")
+              f:close()
+              content = content:gsub("%s+", "")
+              local parts = {}
+              for part in string.gmatch(content, "[^-]+") do
+                table.insert(parts, part)
+              end
+              if #parts >= 2 then
+                _G.device_hostname = parts[2]
+              else
+                _G.device_hostname = content
+              end
+            else
+              _G.device_hostname = "unknown"
+            end
+          end
+
           if _G.device_hostname then
             event.log.device_hostname = _G.device_hostname
           end
@@ -176,31 +177,29 @@ transforms:
     inputs: ["host_metrics"]
     version: "2"
     hooks:
-      init: |
-        -- Read hostname from file once at startup
-        local f = io.open("/etc/hostname", "r")
-        if f then
-          local content = f:read("*all")
-          f:close()
-          -- Strip whitespace
-          content = content:gsub("%s+", "")
-          -- Extract serial number (rpi4-14b52e5c-20251124122742 -> 14b52e5c)
-          local parts = {}
-          for part in string.gmatch(content, "[^-]+") do
-            table.insert(parts, part)
-          end
-          
-          if #parts >= 2 then
-            _G.device_hostname = parts[2]
-          else
-            _G.device_hostname = content
-          end
-        else
-          _G.device_hostname = nil
-        end
-
       process: |
         function (event, emit)
+          -- Lazy load hostname from file
+          if not _G.device_hostname then
+            local f = io.open("/etc/hostname", "r")
+            if f then
+              local content = f:read("*all")
+              f:close()
+              content = content:gsub("%s+", "")
+              local parts = {}
+              for part in string.gmatch(content, "[^-]+") do
+                table.insert(parts, part)
+              end
+              if #parts >= 2 then
+                _G.device_hostname = parts[2]
+              else
+                _G.device_hostname = content
+              end
+            else
+              _G.device_hostname = "unknown"
+            end
+          end
+
           if _G.device_hostname then
             event.metric.tags.host = _G.device_hostname
           end
