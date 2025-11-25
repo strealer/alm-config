@@ -106,6 +106,9 @@ services:
       # Docker socket for container logs
       - /var/run/docker.sock:/var/run/docker.sock:ro
       
+      # Host hostname for device identification
+      - /etc/hostname:/host/hostname:ro
+      
       # Journald for system logs
       - /var/log/journal:/var/log/journal:ro
       - /run/systemd/journal:/run/systemd/journal:ro
