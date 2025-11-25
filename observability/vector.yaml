@@ -51,40 +51,55 @@ transforms:
     drop_on_error: true
     reroute_dropped: true
     source: |
-      # Pre-check for log type to avoid double regex parse
-      if !starts_with(string!(.message), "FT") && !starts_with(string!(.message), "BK") {
-        abort
-      }
+      message = string!(.message)
       
-      # Try Frontend format first (most common)
-      parsed, err = parse_regex(.message, r'^FT \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<cache_status>[^|]+) \| (?P<bytes>\d+)$')
-      
-      if err != null {
-        # Fallback to Backend format
-        parsed, err = parse_regex(.message, r'^BK \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<bytes>\d+)$')
+      # Try Custom Format (FT/BK)
+      if starts_with(message, "FT") || starts_with(message, "BK") {
+        # Try Frontend format first (most common)
+        parsed, err = parse_regex(message, r'^FT \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<cache_status>[^|]+) \| (?P<bytes>\d+)$')
+        
+        if err != null {
+          # Fallback to Backend format
+          parsed, err = parse_regex(message, r'^BK \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<bytes>\d+)$')
+          if err != null {
+            abort
+          }
+          .log_type = "BK"
+          .cache_status = "N/A"
+        } else {
+          .log_type = "FT"
+          .cache_status = parsed.cache_status
+        }
+        
+        # Common parsing for custom format
+        .timestamp = parse_timestamp!(parsed.timestamp, "%Y-%m-%dT%H:%M:%S%z")
+        .status = to_int!(parsed.status)
+        .bytes_sent = to_int!(parsed.bytes)
+        
+        # Extract request parts efficiently
+        .request = parsed.request
+        req_parts = split(string!(parsed.request), " ", limit: 3)
+        .method = req_parts[0]
+        .path = req_parts[1]
+        .http_version = req_parts[2]
+        
+      } else {
+        # Fallback to Standard Combined Format
+        parsed, err = parse_regex(message, r'^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<http_version>\S+)" (?P<status>\d+) (?P<bytes_sent>\d+) "(?P<referer>[^"]*)" "(?P<user_agent>[^"]*)"')
         if err != null {
           abort
         }
-        .log_type = "BK"
-        .cache_status = "N/A"
-      } else {
-        .log_type = "FT"
-        .cache_status = parsed.cache_status
+        
+        .timestamp = parse_timestamp!(parsed.timestamp, "%d/%b/%Y:%H:%M:%S %z")
+        .status = to_int!(parsed.status)
+        .bytes_sent = to_int!(parsed.bytes_sent)
+        .method = parsed.method
+        .path = parsed.path
+        .http_version = parsed.http_version
+        .cache_status = "UNKNOWN"
       }
       
-      # Common parsing
-      .timestamp = parse_timestamp!(parsed.timestamp, "%Y-%m-%dT%H:%M:%S%z")
-      .status = to_int!(parsed.status)
-      .bytes_sent = to_int!(parsed.bytes)
-      
-      # Extract request parts efficiently
-      .request = parsed.request
-      req_parts = split(string!(parsed.request), " ", limit: 3)
-      .method = req_parts[0]
-      .path = req_parts[1]
-      .http_version = req_parts[2]
-      
-      # Efficient categorization
+      # Efficient categorization (Common)
       path_lower = downcase(string!(.path))
       if contains(path_lower, "/media") {
         .cache_type = "media"
