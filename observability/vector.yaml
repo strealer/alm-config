@@ -189,6 +189,8 @@ transforms:
           if _G.device_hostname then
             event.metric.tags.host = _G.device_hostname
           end
+          -- Debug print to verify metrics are passing through
+          -- print("Processing metric: " .. (event.metric.name or "unknown"))
           emit(event)
         end
 
