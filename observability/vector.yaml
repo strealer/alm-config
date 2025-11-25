@@ -131,12 +131,19 @@ transforms:
     inputs: ["parse_nginx_access"]
     rate: 10
 
-  # Add device metadata
   add_metadata:
     type: remap
     inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs"]
     source: |
-      .device_hostname = get_hostname!()
+      # Extract serial number from hostname (rpi4-14b52e5c-20251124122742 -> 14b52e5c)
+      hostname = get_hostname!()
+      parts = split(hostname, "-")
+      if length(parts) >= 2 {
+        .device_hostname = parts[1]  # Serial number (middle part)
+      } else {
+        .device_hostname = hostname  # Fallback to full hostname
+      }
+      
       .device_role = "alm-edge"
       .environment = "production"
       
