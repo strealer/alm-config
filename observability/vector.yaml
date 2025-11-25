@@ -175,10 +175,17 @@ transforms:
           event.metric = metric
           emit(event)
         end
-  # Generate metrics from logs (for Prometheus)
+  # Filter only parsed nginx logs for metrics (logs with status field)
+  nginx_parsed_logs:
+    type: filter
+    inputs: ["add_metadata"]
+    condition:
+      type: vrl
+      source: exists(.status) && exists(.method)
+  # Generate metrics from parsed nginx logs (for Prometheus)
   log_metrics:
     type: log_to_metric
-    inputs: ["add_metadata"]
+    inputs: ["nginx_parsed_logs"]
     metrics:
       - type: counter
         field: status
@@ -188,6 +195,7 @@ transforms:
           status: "{{ status }}"
           method: "{{ method }}"
           cache_status: "{{ cache_status }}"
+          device: "{{ device_hostname }}"
 # ============================================================================
 # SINKS
 # ============================================================================
