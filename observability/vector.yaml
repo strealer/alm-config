@@ -149,6 +149,24 @@ transforms:
           if not event.log.cache_status then
             event.log.cache_status = "N/A"
           end
+          
+          -- Extract IP fields from ip_info JSON message
+          if event.log.source == "ip_info" or event.log.source_type == "exec" then
+            local message = event.log.message
+            if message then
+              -- Parse JSON message for public_ip and local_ip
+              local public_ip = string.match(message, '"public_ip":%s*"([^"]+)"')
+              local local_ip = string.match(message, '"local_ip":%s*"([^"]+)"')
+              
+              if public_ip then
+                event.log.public_ip = public_ip
+              end
+              if local_ip then
+                event.log.local_ip = local_ip
+              end
+            end
+          end
+          
           emit(event)
         end
 
