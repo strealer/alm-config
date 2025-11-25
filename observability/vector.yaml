@@ -96,12 +96,11 @@ transforms:
         .cache_type = "other"
       }
 
-  # Sampling for high-volume logs (keep every 10th success, keep all errors)
+  # Sampling for high-volume logs (keep every 10th success)
   sample_nginx_access:
     type: sample
     inputs: ["parse_nginx_access"]
     rate: 10
-    exclude: '.status >= 400'  # Keep all error responses (4xx/5xx) passed through unsampled
 
   # Add device metadata
   add_metadata:
