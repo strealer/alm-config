@@ -77,28 +77,9 @@ transforms:
       message = string!(.message)
       .source_type = "nginx_access"
       
-      # Try Custom Format (FT/BK)
-      if starts_with(message, "FT") || starts_with(message, "BK") {
-        # Try Frontend format first (most common)
-        parsed, err = parse_regex(message, r'^FT \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<cache_status>[^|]+) \| (?P<bytes>\d+)$')
-        
-        if err != null {
-          # Fallback to Backend format
-          parsed, err = parse_regex(message, r'^BK \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<bytes>\d+)$')
-          if err != null {
-            abort
-          }
-          .log_type = "BK"
-          .cache_status = "N/A"
-        } else {
-          .log_type = "FT"
-          .cache_status = parsed.cache_status
-        }
-        
-        # Common parsing for custom format
       # Parse nginx custom log format
-      # Format: "FT | $time_iso_01 | $status | $request | $upstream_cache_status | $body_bytes_sent"
-      parsed, err = parse_regex(.message, r'^(?P<log_type>[A-Z]+) \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<cache_status>[^|]+) \| (?P<bytes>\d+)$')
+      # Format: "FT | $time_iso8601 | $status | $request | $upstream_cache_status | $body_bytes_sent"
+      parsed, err = parse_regex(message, r'^(?P<log_type>[A-Z]+) \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<cache_status>[^|]+) \| (?P<bytes>\d+)$')
       
       if err == null {
         .log_type = parsed.log_type
@@ -134,7 +115,7 @@ transforms:
   # Add device metadata (using Lua for consistency and file reading)
   add_metadata:
     type: lua
-    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs"]
+    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "ip_info"]
     version: "2"
     hooks:
       process: |
