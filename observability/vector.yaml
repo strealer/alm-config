@@ -52,6 +52,15 @@ sources:
       exec_interval_secs: 300 # Run every 5 minutes (lightweight command, minimal overhead)
     decoding:
       codec: "json"
+  # Collect CPU temperature from thermal zone
+  cpu_temperature:
+    type: "exec"
+    command: ["/bin/sh", "-c", "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo '0'"]
+    mode: "scheduled"
+    scheduled:
+      exec_interval_secs: 15 # Match host_metrics scrape interval
+    decoding:
+      codec: "bytes"
 # ============================================================================
 # TRANSFORMS
 # ============================================================================
@@ -111,6 +120,61 @@ transforms:
           -- print("Processing metric: " .. (event.metric.name or "unknown"))
           emit(event)
         end
+  # Convert temperature from millidegrees to degrees Celsius
+  convert_temperature:
+    type: remap
+    inputs: ["cpu_temperature"]
+    source: |
+      # Convert from millidegrees to degrees (divide by 1000)
+      temp_millidegrees = to_int!(.message)
+      .temperature_celsius = temp_millidegrees / 1000.0
+  # Convert CPU temperature to metric with hostname
+  temperature_to_metric:
+    type: lua
+    inputs: ["convert_temperature"]
+    version: "2"
+    hooks:
+      process: |
+        function (event, emit)
+          -- Lazy load hostname
+          if not _G.device_hostname then
+            local f = io.open("/etc/hostname", "r")
+            if f then
+              local content = f:read("*all")
+              f:close()
+              content = content:gsub("%s+", "")
+              local parts = {}
+              for part in string.gmatch(content, "[^-]+") do
+                table.insert(parts, part)
+              end
+              if #parts >= 2 then
+                _G.device_hostname = parts[2]
+              else
+                _G.device_hostname = content
+              end
+            else
+              _G.device_hostname = "unknown"
+            end
+          end
+
+          -- Create metric event
+          local metric = {
+            kind = "absolute",
+            name = "cpu_temperature_celsius",
+            namespace = "host",
+            timestamp = event.log.timestamp,
+            tags = {
+              host = _G.device_hostname,
+              sensor = "thermal_zone0"
+            },
+            gauge = {
+              value = tonumber(event.log.temperature_celsius) or 0
+            }
+          }
+
+          event.metric = metric
+          emit(event)
+        end
   # Generate metrics from logs (for Prometheus)
   log_metrics:
     type: log_to_metric
@@ -168,7 +232,7 @@ sinks:
   # Metrics: Push to Prometheus (Remote Write)
   prometheus_remote_write:
     type: prometheus_remote_write
-    inputs: ["log_metrics", "vector_metrics", "enrich_host_metrics"] # Send generated metrics + internal + enriched host metrics
+    inputs: ["log_metrics", "vector_metrics", "enrich_host_metrics", "temperature_to_metric"] # Send generated metrics + internal + enriched host metrics + temperature
     endpoint: "${PROMETHEUS_ENDPOINT:-http://your-prometheus:9090}/api/v1/write"
     default_namespace: "strealer"
     healthcheck:
@@ -176,6 +240,6 @@ sinks:
   # Expose metrics locally for scraping (optional backup)
   prometheus_exporter:
     type: prometheus_exporter
-    inputs: ["log_metrics", "vector_metrics", "enrich_host_metrics"]
+    inputs: ["log_metrics", "vector_metrics", "enrich_host_metrics", "temperature_to_metric"]
     address: "0.0.0.0:9598"
     default_namespace: "strealer"

@@ -108,7 +108,10 @@ services:
 
       # Mount host hostname file (read-only)
       - /etc/hostname:/etc/hostname:ro
-      
+
+      # Mount thermal zone for CPU temperature monitoring
+      - /sys/class/thermal:/sys/class/thermal:ro
+
       # Journald for system logs
       - /var/log/journal:/var/log/journal:ro
       - /run/systemd/journal:/run/systemd/journal:ro
