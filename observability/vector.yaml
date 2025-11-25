@@ -86,45 +86,35 @@ transforms:
         }
         
         # Common parsing for custom format
+      # Parse nginx custom log format
+      # Format: "FT | $time_iso8601 | $status | $request | $upstream_cache_status | $body_bytes_sent"
+      parsed, err = parse_regex(.message, r'^(?P<log_type>[A-Z]+) \| (?P<timestamp>[^ ]+) \| (?P<status>\d+) \| (?P<request>[^|]+) \| (?P<cache_status>[^|]+) \| (?P<bytes>\d+)$')
+      
+      if err == null {
+        .log_type = parsed.log_type
         .timestamp = parse_timestamp!(parsed.timestamp, "%Y-%m-%dT%H:%M:%S%z")
         .status = to_int!(parsed.status)
+        .request = parsed.request
+        .cache_status = parsed.cache_status
         .bytes_sent = to_int!(parsed.bytes)
         
-        # Extract request parts efficiently
-        .request = parsed.request
-        req_parts = split(string!(parsed.request), " ", limit: 3)
-        .method = req_parts[0]
-        .path = req_parts[1]
-        .http_version = req_parts[2]
+        # Extract request method and path
+        request_parts = split(parsed.request, " ", limit: 3)
+        .method = request_parts[0]
+        .path = request_parts[1]
+        .http_version = request_parts[2]
         
-      } else {
-        # Fallback to Standard Combined Format
-        parsed, err = parse_regex(message, r'^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<http_version>\S+)" (?P<status>\d+) (?P<bytes_sent>\d+) "(?P<referer>[^"]*)" "(?P<user_agent>[^"]*)"')
-        if err != null {
-          abort
+        # Categorize by cache type
+        if contains(string!(.path), "/media") {
+          .cache_type = "media"
+        } else if contains(string!(.path), "/player") {
+          .cache_type = "player"
+        } else if contains(string!(.path), "/renderer") {
+          .cache_type = "renderer"
+        } else {
+          .cache_type = "other"
         }
-        
-        .timestamp = parse_timestamp!(parsed.timestamp, "%d/%b/%Y:%H:%M:%S %z")
-        .status = to_int!(parsed.status)
-        .bytes_sent = to_int!(parsed.bytes_sent)
-        .method = parsed.method
-        .path = parsed.path
-        .http_version = parsed.http_version
-        .cache_status = "UNKNOWN"
       }
-      
-      # Efficient categorization (Common)
-      path_lower = downcase(string!(.path))
-      if contains(path_lower, "/media") {
-        .cache_type = "media"
-      } else if contains(path_lower, "/player") {
-        .cache_type = "player"
-      } else if contains(path_lower, "/renderer") {
-        .cache_type = "renderer"
-      } else {
-        .cache_type = "other"
-      }
-
   # Sampling for high-volume logs (keep every 10th success)
   sample_nginx_access:
     type: sample
@@ -134,7 +124,7 @@ transforms:
   # Add device metadata (using Lua for consistency and file reading)
   add_metadata:
     type: lua
-    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs"]
+    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "ip_info"]
     version: "2"
     hooks:
       process: |

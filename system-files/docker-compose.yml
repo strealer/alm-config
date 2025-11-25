@@ -118,14 +118,13 @@ services:
       - LOKI_ENDPOINT=${LOKI_ENDPOINT:-http://104.155.91.159:3100}
       - PROMETHEUS_ENDPOINT=${PROMETHEUS_ENDPOINT:-http://104.155.91.159:9090}
       - VECTOR_LOG=info
-      # Reduce worker threads for Raspberry Pi (4 cores = 2 threads recommended for background)
-      - VECTOR_THREADS=2
-      
-    ports:
-      - "8686:8686"  # Vector API for health checks
-      - "9598:9598"  # Prometheus metrics endpoint
-      
+      - VECTOR_THREADS=${VECTOR_THREADS:-1}
+    # Use host networking to access local IP and simplify hostname resolution
+    network_mode: "host"
     restart: unless-stopped
+    # Networks are ignored when network_mode: host is used
+    # networks:
+    #   - alm_network
     
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8686/health"]
