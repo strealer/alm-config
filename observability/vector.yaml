@@ -83,7 +83,7 @@ transforms:
     inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "ip_info"]
     version: "2"
     hooks:
-      process: "function (event, emit)\n  -- Lazy load hostname from file\n  if not _G.device_hostname then\n    local f = io.open(\"/etc/hostname\", \"r\")\n    if f then\n      local content = f:read(\"*all\")\n      f:close()\n      content = content:gsub(\"%s+\", \"\")\n      local parts = {}\n      for part in string.gmatch(content, \"[^-]+\") do\n        table.insert(parts, part)\n      end\n      if #parts >= 2 then\n        _G.device_hostname = parts[2]\n      else\n        _G.device_hostname = content\n      end\n    else\n      _G.device_hostname = \"unknown\"\n    end\n  end\n\n  if _G.device_hostname then\n    event.log.device_hostname = _G.device_hostname\n  end\n  event.log.device_role = \"alm-edge\"\n  event.log.environment = \"production\"\n  if not event.log.cache_status then\n    event.log.cache_status = \"N/A\"\n  end\n  \n  -- Ensure IP fields are available for labels\n  -- Check if fields exist (from codec), otherwise parse from message\n  if not event.log.public_ip or not event.log.local_ip then\n     local message = event.log.message\n     if message then\n       local public_ip = string.match(message, '\"public_ip\":%s*\"([^\"]+)\"')\n       local local_ip = string.match(message, '\"local_ip\":%s*\"([^\"]+)\"')\n       \n       if public_ip and not event.log.public_ip then\n         event.log.public_ip = public_ip\n       end\n       if local_ip and not event.log.local_ip then\n         event.log.local_ip = local_ip\n       end\n     end\n  end\n  \n  -- Default to empty string if still missing to prevent label errors\n  if not event.log.public_ip then event.log.public_ip = \"\" end\n  if not event.log.local_ip then event.log.local_ip = \"\" end\n  \n  \n  emit(event)\nend\n"
+      process: "function (event, emit)\n  -- Lazy load hostname from file\n  if not _G.device_hostname then\n    local f = io.open(\"/etc/hostname\", \"r\")\n    if f then\n      local content = f:read(\"*all\")\n      f:close()\n      content = content:gsub(\"%s+\", \"\")\n      local parts = {}\n      for part in string.gmatch(content, \"[^-]+\") do\n        table.insert(parts, part)\n      end\n      if #parts >= 2 then\n        _G.device_hostname = parts[2]\n      else\n        _G.device_hostname = content\n      end\n    else\n      _G.device_hostname = \"unknown\"\n    end\n  end\n\n  if _G.device_hostname then\n    event.log.device_hostname = _G.device_hostname\n  end\n  event.log.device_role = \"alm-edge\"\n  event.log.environment = \"production\"\n  if not event.log.cache_status then\n    event.log.cache_status = \"N/A\"\n  end\n  \n  -- Only add IP fields if they have actual values (from exec source)\n  -- Docker logs don't have IP info, so don't force empty strings\n  if event.log.public_ip and event.log.public_ip ~= \"\" then\n    -- Already has value from exec source\n  elseif event.log.source_type == \"exec\" then\n    -- For exec source, try to parse from message if not already set\n    local message = event.log.message\n    if message and not event.log.public_ip then\n      local public_ip = string.match(message, '\"public_ip\":%s*\"([^\"]+)\"')\n      if public_ip then\n        event.log.public_ip = public_ip\n      end\n    end\n    if message and not event.log.local_ip then\n      local local_ip = string.match(message, '\"local_ip\":%s*\"([^\"]+)\"')\n      if local_ip then\n        event.log.local_ip = local_ip\n      end\n    end\n  end\n  \n  emit(event)\nend\n"
   # Enrich host metrics with correct hostname from mounted file (using Lua since VRL can't read files)
   enrich_host_metrics:
     type: lua
@@ -223,15 +223,16 @@ sinks:
     healthcheck:
       enabled: true
     compression: snappy
-    # Reduced label cardinality for Loki performance
+    # Labels for log filtering, search, and aggregation
+    # All JSON fields are automatically indexed as searchable fields
     labels:
       device: "{{ device_hostname }}"
       role: "alm-edge"
       env: "production"
       log_source: "{{ source_type }}"
       cache_status: "{{ cache_status }}"
-      public_ip: "{{ public_ip }}"
-      local_ip: "{{ local_ip }}"
+      container: "{{ container_name }}"
+      stream: "{{ stream }}"
     # Disk buffering for edge resilience
     buffer:
       type: disk
