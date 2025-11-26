@@ -175,26 +175,27 @@ transforms:
           }
         end
   # Filter only parsed nginx logs for metrics (logs with status field)
+  # After Lua transform, fields are nested under .log
   nginx_parsed_logs:
     type: filter
     inputs: ["add_metadata"]
     condition:
       type: vrl
-      source: exists(.status) && exists(.method)
+      source: exists(.log.status) && exists(.log.method)
   # Generate metrics from parsed nginx logs (for Prometheus)
   log_metrics:
     type: log_to_metric
     inputs: ["nginx_parsed_logs"]
     metrics:
       - type: counter
-        field: status
+        field: log.status
         name: http_requests_total
         namespace: strealer
         tags:
-          status: "{{ status }}"
-          method: "{{ method }}"
-          cache_status: "{{ cache_status }}"
-          device: "{{ device_hostname }}"
+          status: "{{ log.status }}"
+          method: "{{ log.method }}"
+          cache_status: "{{ log.cache_status }}"
+          host: "{{ log.device_hostname }}"
 # ============================================================================
 # SINKS
 # ============================================================================
