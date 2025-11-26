@@ -157,23 +157,22 @@ transforms:
             end
           end
 
-          -- Create metric event
-          local metric = {
-            kind = "absolute",
-            name = "cpu_temperature_celsius",
-            namespace = "host",
-            timestamp = event.log.timestamp,
-            tags = {
-              host = _G.device_hostname,
-              sensor = "thermal_zone0"
-            },
-            gauge = {
-              value = tonumber(event.log.temperature_celsius) or 0
+          -- Create new metric event (metric events must have metric key at top level)
+          emit {
+            metric = {
+              kind = "absolute",
+              name = "cpu_temperature_celsius",
+              namespace = "host",
+              timestamp = event.log.timestamp,
+              tags = {
+                host = _G.device_hostname,
+                sensor = "thermal_zone0"
+              },
+              gauge = {
+                value = tonumber(event.log.temperature_celsius) or 0
+              }
             }
           }
-
-          event.metric = metric
-          emit(event)
         end
   # Filter only parsed nginx logs for metrics (logs with status field)
   nginx_parsed_logs:
