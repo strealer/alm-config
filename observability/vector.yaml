@@ -182,21 +182,17 @@ transforms:
     condition:
       type: vrl
       source: exists(.status) && exists(.method)
-  # Add device hostname for metric labels
+  # Add device hostname using environment variable or default
   add_device_label:
     type: remap
     inputs: ["nginx_parsed_logs"]
     source: |
-      .device_hostname, err = read_file("/etc/hostname")
-      if err != null {
-        .device_hostname = "unknown"
-      } else {
-        .device_hostname = strip_whitespace!(.device_hostname)
-        # Extract second component if hostname format is rpi4-HASH-TIMESTAMP
-        parts = split!(.device_hostname, "-")
-        if length(parts) >= 2 {
-          .device_hostname = parts[1]
-        }
+      # Use HOSTNAME env var or default to "unknown"
+      .device_hostname = get_env_var!("HOSTNAME")
+      # Extract device ID if hostname format is rpi4-HASH-TIMESTAMP
+      parts = split(.device_hostname, "-")
+      if length(parts) >= 2 {
+        .device_hostname = parts[1]
       }
   # Generate metrics from parsed nginx logs (for Prometheus)
   log_metrics:
