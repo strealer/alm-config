@@ -175,17 +175,33 @@ transforms:
           }
         end
   # Filter only parsed nginx logs for metrics (logs with status field)
-  # Fields remain at root level (Lua doesn't restructure, just adds fields)
+  # Bypass Lua for metrics generation - connect directly to sample_nginx_access
   nginx_parsed_logs:
     type: filter
-    inputs: ["add_metadata"]
+    inputs: ["sample_nginx_access"]
     condition:
       type: vrl
       source: exists(.status) && exists(.method)
+  # Add device hostname for metric labels
+  add_device_label:
+    type: remap
+    inputs: ["nginx_parsed_logs"]
+    source: |
+      .device_hostname, err = read_file("/etc/hostname")
+      if err != null {
+        .device_hostname = "unknown"
+      } else {
+        .device_hostname = strip_whitespace!(.device_hostname)
+        # Extract second component if hostname format is rpi4-HASH-TIMESTAMP
+        parts = split!(.device_hostname, "-")
+        if length(parts) >= 2 {
+          .device_hostname = parts[1]
+        }
+      }
   # Generate metrics from parsed nginx logs (for Prometheus)
   log_metrics:
     type: log_to_metric
-    inputs: ["nginx_parsed_logs"]
+    inputs: ["add_device_label"]
     metrics:
       - type: counter
         field: status
