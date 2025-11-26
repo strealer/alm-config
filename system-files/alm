@@ -69,6 +69,34 @@ get_container_suffix() {
     fi
 }
 
+# Get main container image checksum (SHA256)
+get_image_checksum() {
+    local suffix
+    suffix=$(get_container_suffix)
+    local main_container="alm_${suffix}"
+
+    # Get image ID from running/stopped container
+    local image_id
+    image_id=$(sudo docker ps -a --filter "name=^${main_container}$" --format "{{.Image}}" 2>/dev/null)
+
+    if [[ -z "$image_id" ]]; then
+        echo "unknown"
+        return 1
+    fi
+
+    # Get full image digest
+    local digest
+    digest=$(sudo docker inspect --format='{{index .RepoDigests 0}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{64}' || echo "")
+
+    if [[ -n "$digest" ]]; then
+        # Return first 12 characters of SHA256
+        echo "${digest:0:12}"
+    else
+        # Fallback to short image ID
+        sudo docker inspect --format='{{.ID}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{12}' || echo "unknown"
+    fi
+}
+
 #
 # Command: alm status
 # Show device and container status
@@ -81,6 +109,7 @@ Usage: alm status
 Display device information and container status.
 
 Shows:
+  • Current container image checksum
   • Device IP address and hostname
   • System architecture (ARM64/AMD64)
   • Docker service status
@@ -98,15 +127,21 @@ EOF
     local hostname
     local arch
     local suffix
+    local checksum
 
     ip=$(get_device_ip)
     hostname=$(hostname)
     arch=$(get_architecture)
     suffix=$(get_container_suffix)
+    checksum=$(get_image_checksum)
 
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║${NC}  ${GREEN}ALM Device Status${NC}                                        ${CYAN}║${NC}"
     echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+
+    echo -e "${BLUE}Image Checksum:${NC}"
+    echo "  SHA256: $checksum"
     echo ""
 
     echo -e "${BLUE}Device Information:${NC}"
