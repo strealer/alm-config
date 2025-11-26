@@ -194,6 +194,8 @@ transforms:
       if length(parts) >= 2 {
         .device_hostname = parts[1]
       }
+      # Update timestamp to now (so metrics aren't rejected as "out of bounds")
+      .timestamp = now()
   # Generate metrics from parsed nginx logs (for Prometheus)
   log_metrics:
     type: log_to_metric
