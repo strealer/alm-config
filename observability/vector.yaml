@@ -240,7 +240,7 @@ sinks:
     buffer:
       type: disk
       max_size: 536870912 # 512MB - sufficient for ~8 hours of logs on typical edge device
-      when_full: block_on_write # Exert backpressure on sources instead of dropping
+      when_full: block # Exert backpressure on sources instead of dropping
     # EDGE OPTIMIZATION: Tuned for high-latency networks (5-60s latency)
     batch:
       max_bytes: 262144 # 256KB - balance between throughput and request overhead
