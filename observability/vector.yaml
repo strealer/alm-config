@@ -3,18 +3,19 @@
 api:
   enabled: true
   address: "0.0.0.0:8686"
+data_dir: "/var/lib/vector"
 # ============================================================================
 # SOURCES
 # ============================================================================
 sources:
   nginx_access:
     type: file
-    include: ["/var/log/nginx/access*.log"]
+    include: ["/var/log/alm/nginx/access*.log"]
     read_from: end
     max_line_bytes: 102400
   nginx_error:
     type: file
-    include: ["/var/log/nginx/error*.log"]
+    include: ["/var/log/alm/nginx/error*.log"]
     read_from: end
     max_line_bytes: 102400
   docker_containers:
