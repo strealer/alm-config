@@ -187,8 +187,9 @@ transforms:
     type: remap
     inputs: ["nginx_parsed_logs"]
     source: |
-      # Use HOSTNAME env var or default to "unknown"
-      .device_hostname = get_env_var!("HOSTNAME")
+      # Get hostname from system or default to "unknown"
+      hostname, err = get_hostname()
+      .device_hostname = hostname || "unknown"
       # Extract device ID if hostname format is rpi4-HASH-TIMESTAMP
       parts = split(.device_hostname, "-")
       if length(parts) >= 2 {
