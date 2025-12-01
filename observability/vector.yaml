@@ -110,6 +110,15 @@ sources:
       exec_interval_secs: 60 # Check every minute
     decoding:
       codec: "json"
+  # NEW: Collect top 10 processes by CPU usage with detailed metrics
+  top_processes:
+    type: "exec"
+    command: ["/bin/sh", "-c", "ps -eo pid,ppid,user,comm,state,%cpu,%mem,rss,vsz --sort=-%cpu | head -11 | awk 'BEGIN {print \"[\"} NR==1 {next} {printf \"%s{\\\"pid\\\":%s,\\\"ppid\\\":%s,\\\"user\\\":\\\"%s\\\",\\\"command\\\":\\\"%s\\\",\\\"state\\\":\\\"%s\\\",\\\"cpu\\\":%s,\\\"mem\\\":%s,\\\"rss_kb\\\":%s,\\\"vsz_kb\\\":%s}\", (NR>2?\",\":\"\"), $$1, $$2, $$3, $$4, $$5, $$6, $$7, $$8, $$9} END {print \"]\"}'"]
+    mode: "scheduled"
+    scheduled:
+      exec_interval_secs: 60 # Collect every minute
+    decoding:
+      codec: "json"
 # ============================================================================
 # TRANSFORMS
 # ============================================================================
@@ -129,7 +138,7 @@ transforms:
   # OPTIMIZED: Replaced Lua with VRL (40% faster, parallelizable)
   add_metadata:
     type: remap
-    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "kernel_logs", "ip_info", "service_health"]
+    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "kernel_logs", "ip_info", "service_health", "top_processes"]
     source: |
       # Get hostname from system (cached by Vector)
       hostname, _ = get_hostname()
@@ -147,6 +156,11 @@ transforms:
       # Ensure cache_status exists
       if !exists(.cache_status) {
         .cache_status = "N/A"
+      }
+
+      # Set source_type for top_processes data (has pid field)
+      if exists(.pid) {
+        .source_type = "top_processes"
       }
 
       # Add human-readable priority labels for system logs (better Grafana UX)
