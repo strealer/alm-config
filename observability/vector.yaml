@@ -118,6 +118,8 @@ sources:
     mode: "scheduled"
     scheduled:
       exec_interval_secs: 60 # Collect every minute
+    framing:
+      method: "newline_delimited"
     decoding:
       codec: "json"
 # ============================================================================
