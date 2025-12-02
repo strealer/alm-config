@@ -111,9 +111,10 @@ sources:
     decoding:
       codec: "json"
   # NEW: Collect top 10 processes by CPU usage with detailed metrics
+  # Output: NDJSON format (one JSON object per line, not an array)
   top_processes:
     type: "exec"
-    command: ["/bin/sh", "-c", "ps -eo pid,ppid,user,comm,state,%cpu,%mem,rss,vsz --sort=-%cpu | head -11 | awk 'BEGIN {print \"[\"} NR==1 {next} {printf \"%s{\\\"pid\\\":%s,\\\"ppid\\\":%s,\\\"user\\\":\\\"%s\\\",\\\"command\\\":\\\"%s\\\",\\\"state\\\":\\\"%s\\\",\\\"cpu\\\":%s,\\\"mem\\\":%s,\\\"rss_kb\\\":%s,\\\"vsz_kb\\\":%s}\", (NR>2?\",\":\"\"), $$1, $$2, $$3, $$4, $$5, $$6, $$7, $$8, $$9} END {print \"]\"}'"]
+    command: ["/bin/sh", "-c", "ps -eo pid,ppid,user,comm,state,%cpu,%mem,rss,vsz --sort=-%cpu | head -11 | awk 'NR==1 {next} {print \"{\\\"pid\\\":\\\"\" $$1 \"\\\",\\\"ppid\\\":\\\"\" $$2 \"\\\",\\\"user\\\":\\\"\" $$3 \"\\\",\\\"command\\\":\\\"\" $$4 \"\\\",\\\"state\\\":\\\"\" $$5 \"\\\",\\\"cpu\\\":\" $$6 \",\\\"mem\\\":\" $$7 \",\\\"rss_kb\\\":\" $$8 \",\\\"vsz_kb\\\":\" $$9 \"}\"}'"]
     mode: "scheduled"
     scheduled:
       exec_interval_secs: 60 # Collect every minute
