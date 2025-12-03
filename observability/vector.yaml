@@ -185,6 +185,11 @@ transforms:
         .source_type = "top_processes"
       }
 
+      # Default priority_label for non-system logs
+      if !exists(.priority_label) {
+        .priority_label = "INFO"
+      }
+
       # Add human-readable priority labels for system logs (better Grafana UX)
       if exists(.PRIORITY) {
         priority_num = to_int(.PRIORITY) ?? 6
