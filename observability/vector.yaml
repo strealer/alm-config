@@ -156,6 +156,14 @@ transforms:
       .device_role = "alm-edge"
       .environment = "production"
 
+      # Default container_name and stream for non-docker sources
+      if !exists(.container_name) {
+        .container_name = "host"
+      }
+      if !exists(.stream) {
+        .stream = "stdout"
+      }
+
       # Ensure cache_status exists
       if !exists(.cache_status) {
         .cache_status = "N/A"
