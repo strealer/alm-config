@@ -185,8 +185,8 @@ transforms:
         .source_type = "top_processes"
       }
 
-      # Set source_type for docker_images_info (has digest field)
-      if exists(.digest) {
+      # Set source_type for docker_images_info (has img_digest field)
+      if exists(.img_digest) {
         .source_type = "docker_images_info"
       }
 
