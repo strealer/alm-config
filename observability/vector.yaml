@@ -122,6 +122,17 @@ sources:
       method: "newline_delimited"
     decoding:
       codec: "json"
+  # NEW: Collect Docker image metadata (Digest, Created, Size)
+  docker_images_info:
+    type: "exec"
+    command: ["/bin/sh", "-c", "docker images --no-trunc --format '{\"repository\":\"{{.Repository}}\",\"tag\":\"{{.Tag}}\",\"digest\":\"{{.Digest}}\",\"created\":\"{{.CreatedSince}}\",\"size\":\"{{.Size}}\"}' | grep alm"]
+    mode: "scheduled"
+    scheduled:
+      exec_interval_secs: 300 # Collect every 5 minutes
+    framing:
+      method: "newline_delimited"
+    decoding:
+      codec: "json"
 # ============================================================================
 # TRANSFORMS
 # ============================================================================
@@ -141,7 +152,7 @@ transforms:
   # OPTIMIZED: Replaced Lua with VRL (40% faster, parallelizable)
   add_metadata:
     type: remap
-    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "kernel_logs", "ip_info", "service_health", "top_processes"]
+    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "kernel_logs", "ip_info", "service_health", "top_processes", "docker_images_info"]
     source: |
       # Get hostname from system (cached by Vector)
       hostname, _ = get_hostname()
