@@ -185,6 +185,11 @@ transforms:
         .source_type = "top_processes"
       }
 
+      # Set source_type for docker_images_info (has digest field)
+      if exists(.digest) {
+        .source_type = "docker_images_info"
+      }
+
       # Default priority_label for non-system logs
       if !exists(.priority_label) {
         .priority_label = "INFO"
