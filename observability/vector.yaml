@@ -125,7 +125,7 @@ sources:
   # NEW: Collect Docker image metadata (Digest, Created, Size)
   docker_images_info:
     type: "exec"
-    command: ["/usr/local/bin/collect_docker_images_info.sh"]
+    command: ["/bin/sh", "-c", "docker ps -a --format '{{.Names}}' | grep alm | while read c; do img=$$(docker inspect -f '{{.Image}}' $$c 2>/dev/null); [ -n \"$$img\" ] && printf '{\"img_container\":\"%s\",\"img_repository\":\"%s\",\"img_digest\":\"%s\",\"img_created\":\"%s\",\"img_size_mb\":\"%.2f\",\"img_state\":\"%s\",\"img_state_time\":\"%s\"}\\n' \"$$c\" \"$$(docker inspect -f '{{if .RepoTags}}{{index .RepoTags 0}}{{else}}{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}none{{end}}{{end}}' $$img)\" \"$$(docker inspect -f '{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}none{{end}}' $$img)\" \"$$(docker inspect -f '{{.Created}}' $$img)\" \"$$(echo $$(docker inspect -f '{{.Size}}' $$img) | awk '{print $$1/1048576}')\" \"$$(docker inspect -f '{{.State.Status}}' $$c)\" \"$$(docker inspect -f '{{if eq .State.Status \\\"running\\\"}}{{.State.StartedAt}}{{else}}{{.State.FinishedAt}}{{end}}' $$c)\"; done"]
     mode: "scheduled"
     scheduled:
       exec_interval_secs: 300 # Collect every 5 minutes
