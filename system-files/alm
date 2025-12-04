@@ -456,15 +456,22 @@ Usage: alm factory-reset
 Reset device to a FRESH-BOOT state (like a newly flashed device).
 
 ${RED}⚠️  DANGER ZONE - This goes beyond 'alm reset':${NC}
-  1. Removes ALL Docker containers and images
-  2. Uninstalls Docker completely
-  3. Deletes ALL ALM state and flags
-  4. Clears Puppet trigger flags
-  5. Triggers fresh Puppet run on next login
+  1. Removes ALL Docker containers, images, and volumes
+  2. Uninstalls Docker completely (Puppet will reinstall)
+  3. Clears Puppet certificate and agent state
+  4. Deletes ALL ALM runtime state and config
+  5. Re-enables first-boot configure_puppet_agent.service
+
+${BLUE}What is KEPT (pi-gen installed):${NC}
+  • User accounts (almadmin, almuser, root)
+  • SSH authorized_keys
+  • ALM CLI tool, setup-progress script
+  • Basic directory structure (/opt/alm)
 
 After this, the next SSH login will:
   • Show "Installing Docker..." progress
-  • Re-run full Puppet setup
+  • Run configure_puppet_agent.service
+  • Re-run full Puppet setup from scratch
   • Pull fresh images and start containers
 
 Use this to:
@@ -481,15 +488,18 @@ EOF
     fi
 
     echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${RED}║${NC}  ${RED}⚠️  DANGER: FACTORY RESET - REMOVES DOCKER ENTIRELY${NC}      ${RED}║${NC}"
+    echo -e "${RED}║${NC}  ${RED}⚠️  DANGER: FACTORY RESET - SIMULATES FRESH FLASH${NC}        ${RED}║${NC}"
     echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "This will simulate a FRESH FLASH by:"
-    echo "  • Stopping and removing ALL containers"
-    echo "  • Removing ALL Docker images"
-    echo "  • Uninstalling Docker completely"
-    echo "  • Deleting all ALM state files"
-    echo "  • Clearing Puppet trigger flags"
+    echo "This will reset to FRESH-BOOT state by removing:"
+    echo "  • ALL Docker containers, images, and volumes"
+    echo "  • Docker installation (will be reinstalled by Puppet)"
+    echo "  • Puppet certificate and agent state"
+    echo "  • ALL ALM runtime state and config"
+    echo ""
+    echo -e "${BLUE}Keeping (pi-gen installed):${NC}"
+    echo "  • User accounts and SSH keys"
+    echo "  • ALM CLI and setup-progress script"
     echo ""
     echo -e "${YELLOW}Next login will show full first-boot setup progress.${NC}"
     echo ""
@@ -505,9 +515,10 @@ EOF
     log_info "Stopping services..."
     sudo systemctl stop strealer-container.service 2>/dev/null || true
     sudo systemctl stop docker 2>/dev/null || true
+    sudo systemctl stop puppet 2>/dev/null || true
 
     echo ""
-    log_info "Removing ALL containers..."
+    log_info "Removing ALL Docker containers..."
     sudo docker rm -f $(sudo docker ps -aq) 2>/dev/null || true
 
     echo ""
@@ -524,9 +535,19 @@ EOF
     sudo rm -rf /var/lib/docker /etc/docker /var/lib/containerd
 
     echo ""
-    log_info "Clearing ALM state files..."
+    log_info "Clearing Puppet state..."
+    sudo rm -rf /etc/puppetlabs/puppet/ssl
+    sudo rm -f /etc/puppetlabs/puppet/puppet.conf
+    sudo rm -rf /opt/puppetlabs/puppet/cache
+
+    echo ""
+    log_info "Clearing ALM runtime state..."
     sudo rm -rf /var/lib/alm
-    sudo rm -rf /opt/alm/config.sh 2>/dev/null || true
+    sudo rm -f /var/log/alm/*.log 2>/dev/null || true
+
+    echo ""
+    log_info "Re-enabling first-boot services..."
+    sudo systemctl enable configure_puppet_agent.service 2>/dev/null || true
 
     echo ""
     log_success "Factory reset complete!"
@@ -534,7 +555,8 @@ EOF
     echo -e "${CYAN}Next steps:${NC}"
     echo "  1. Log out and log back in as root"
     echo "  2. The setup progress screen will appear"
-    echo "  3. Puppet will install Docker and configure everything"
+    echo "  3. configure_puppet_agent.service will run"
+    echo "  4. Puppet will install Docker and configure everything"
     echo ""
     log_info "Run: exit"
     echo ""
