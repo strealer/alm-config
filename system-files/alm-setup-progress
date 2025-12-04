@@ -24,6 +24,7 @@ set -euo pipefail
 SETUP_COMPLETE_FLAG="/var/lib/alm/setup_complete"
 SETUP_STATE_DIR="/var/lib/alm/setup_state"
 PUPPET_LAST_RUN="/opt/puppetlabs/puppet/cache/state/last_run_report.yaml"
+PUPPET_TRIGGERED_FLAG="/var/lib/alm/puppet_triggered_this_boot"
 
 # Colors
 readonly GREEN='\033[0;32m'
@@ -33,6 +34,66 @@ readonly CYAN='\033[0;36m'
 readonly RED='\033[0;31m'
 readonly GRAY='\033[0;90m'
 readonly NC='\033[0m' # No Color
+
+# Check network connectivity to Puppet server
+check_network() {
+    if curl -sfI --connect-timeout 5 "https://puppet.strealer.io" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
+
+# Trigger Puppet run if needed (only for root user)
+# Returns: 0 = triggered or not needed, 1 = no network
+trigger_puppet_if_needed() {
+    local current_user
+    current_user=$(whoami)
+    
+    # Only root can trigger Puppet
+    if [[ "$current_user" != "root" ]]; then
+        return 0
+    fi
+    
+    # Skip if already triggered this boot
+    if [ -f "$PUPPET_TRIGGERED_FLAG" ]; then
+        return 0
+    fi
+    
+    # Check if setup is already complete
+    if is_setup_complete; then
+        return 0
+    fi
+    
+    # Check network connectivity
+    if ! check_network; then
+        return 1  # No network
+    fi
+    
+    # Check if Puppet has run successfully recently (last 5 minutes)
+    if [ -f "$PUPPET_LAST_RUN" ]; then
+        local last_run_time
+        last_run_time=$(stat -c %Y "$PUPPET_LAST_RUN" 2>/dev/null || stat -f %m "$PUPPET_LAST_RUN" 2>/dev/null)
+        local now
+        now=$(date +%s)
+        local age=$((now - last_run_time))
+        if [ "$age" -lt 300 ]; then
+            # Puppet ran recently, no need to trigger
+            mkdir -p /var/lib/alm
+            touch "$PUPPET_TRIGGERED_FLAG"
+            return 0
+        fi
+    fi
+    
+    # Trigger Puppet run in background
+    echo -e "${YELLOW}Triggering Puppet run...${NC}"
+    mkdir -p /var/lib/alm
+    touch "$PUPPET_TRIGGERED_FLAG"
+    
+    # Run Puppet in background so it doesn't block the progress display
+    nohup /opt/puppetlabs/bin/puppet agent -t >/var/log/alm/puppet-trigger.log 2>&1 &
+    
+    return 0
+}
 
 # Progress bar function
 progress_bar() {
@@ -306,6 +367,9 @@ main() {
     # Checks setup completion (including curl localhost:80) every few seconds
     # For almadmin/root: also monitors Docker image pulls and container status
     # For almuser: relies on curl localhost:80 check (no Docker access needed)
+    
+    local network_warned=false
+    local puppet_triggered=false
 
     while true; do
         # Check if setup is complete
@@ -317,6 +381,43 @@ main() {
             display_progress
             exit 0
         fi
+
+        # Check network and trigger Puppet if needed (only for root)
+        if ! trigger_puppet_if_needed; then
+            # No network - show warning
+            if [ "$network_warned" = false ]; then
+                clear
+                cat <<EOF
+╔═════════════════════════════════════════════════════════════════════════╗
+║                                                                         ║
+║     ███████╗████████╗██████╗ ███████╗ █████╗ ██╗     ███████╗██████╗    ║
+║     ██╔════╝╚══██╔══╝██╔══██╗██╔════╝██╔══██╗██║     ██╔════╝██╔══██╗   ║
+║     ███████╗   ██║   ██████╔╝█████╗  ███████║██║     █████╗  ██████╔╝   ║
+║     ╚════██║   ██║   ██╔══██╗██╔══╝  ██╔══██║██║     ██╔══╝  ██╔══██╗   ║
+║     ███████║   ██║   ██║  ██║███████╗██║  ██║███████╗███████╗██║  ██║   ║
+║     ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝   ║
+║                                                                         ║
+║                         AUTONOMOUS LOCAL MANAGER                        ║
+║                                                                         ║
+╚═════════════════════════════════════════════════════════════════════════╝
+EOF
+                echo ""
+                echo -e "${RED}⚠️  No Network Connection${NC}"
+                echo ""
+                echo -e "${YELLOW}Please connect this device to the internet:${NC}"
+                echo "  • Connect an Ethernet cable, OR"
+                echo "  • Configure WiFi using: sudo nmtui"
+                echo ""
+                echo -e "${GRAY}Checking for network every 5 seconds...${NC}"
+                echo -e "${GRAY}Press Ctrl+C to exit${NC}"
+                network_warned=true
+            fi
+            sleep 5
+            continue
+        fi
+        
+        # Network is available - reset warning flag
+        network_warned=false
 
         # Show current progress
         clear
