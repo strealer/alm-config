@@ -180,8 +180,8 @@ transforms:
         .cache_status = "N/A"
       }
 
-      # Set source_type for top_processes data (has pid field)
-      if exists(.pid) {
+      # Set source_type for top_processes data (has rss_kb field - unique to ps output)
+      if exists(.rss_kb) {
         .source_type = "top_processes"
       }
 
