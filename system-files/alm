@@ -539,6 +539,7 @@ EOF
     sudo rm -rf /etc/puppetlabs/puppet/ssl
     sudo rm -f /etc/puppetlabs/puppet/puppet.conf
     sudo rm -rf /opt/puppetlabs/puppet/cache
+    sudo rm -f /var/lib/puppet-config-done  # Allow configure_puppet_agent.sh to re-run
 
     echo ""
     log_info "Clearing ALM runtime state..."
