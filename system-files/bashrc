@@ -91,6 +91,22 @@ alias ...='cd ../..'
 alias myip='hostname -I | awk "{print \$1}"'
 alias rpi-temp='printf "CPU: %.1f °C\n" "$(awk "{print \$1/1000}" /sys/class/thermal/thermal_zone0/temp)"'
 
+# 5. Puppet protection - prevent non-root users from running puppet agent
+# Running puppet as non-root causes certificate issues (uses ~/.puppetlabs/ instead of system config)
+puppet() {
+    if [[ "$(id -u)" -ne 0 ]]; then
+        echo -e "\033[31mError: puppet must be run as root.\033[0m"
+        echo ""
+        echo "Running puppet as a non-root user creates a separate identity with"
+        echo "a different certificate, which will cause authentication errors."
+        echo ""
+        echo "If you need to trigger a Puppet run, please contact an administrator"
+        echo "with root access to run: sudo /opt/puppetlabs/bin/puppet agent -t"
+        return 1
+    fi
+    /opt/puppetlabs/bin/puppet "$@"
+}
+
 ###############################################################################
 # ALM First-Boot Setup Progress Display
 ###############################################################################
