@@ -193,7 +193,7 @@ EOF
         fi
     else
         log_warning "Main container: Not found"
-        echo "    Start service: sudo systemctl restart strealer-container.service"
+        echo "    Start containers: alm restart"
     fi
 
     echo ""
@@ -209,7 +209,7 @@ EOF
         fi
     else
         log_warning "Telemetry container: Not found"
-        echo "    Start service: sudo systemctl restart strealer-container.service"
+        echo "    Start containers: alm restart"
     fi
 
     echo ""
@@ -304,20 +304,19 @@ EOF
 
 #
 # Command: alm restart
-# Restart ALM service
+# Restart ALM containers
 #
 cmd_restart() {
     if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
         cat <<EOF
 Usage: alm restart
 
-Restart the ALM systemd service.
+Restart the ALM containers using Docker Compose.
 
 This will:
   1. Stop all running containers
-  2. Pull latest container images
-  3. Start containers based on architecture
-  4. Show updated status
+  2. Start containers based on architecture
+  3. Show updated status
 
 Requires: sudo privileges
 
@@ -327,24 +326,28 @@ EOF
         return 0
     fi
 
-    log_info "Restarting ALM service..."
+    log_info "Restarting ALM containers..."
     echo ""
 
-    if ! command -v systemctl >/dev/null 2>&1; then
-        log_error "systemctl not found. This command requires systemd."
+    cd /opt/alm 2>/dev/null || {
+        log_error "ALM directory not found at /opt/alm"
         return 1
+    }
+
+    local suffix
+    suffix=$(get_container_suffix)
+
+    log_info "Stopping containers..."
+    sudo docker compose down 2>/dev/null || true
+
+    log_info "Starting containers..."
+    if [[ "$suffix" == "arm64" ]]; then
+        sudo docker compose up -d --remove-orphans alm_init alm alm_telemetry
+    else
+        sudo docker compose up -d --remove-orphans alm_init alm alm_telemetry
     fi
 
-    if ! sudo systemctl restart strealer-container.service; then
-        log_error "Failed to restart service"
-        echo ""
-        echo "Check service status:"
-        echo "  sudo systemctl status strealer-container.service"
-        echo "  sudo journalctl -u strealer-container.service -n 50"
-        return 1
-    fi
-
-    log_success "Service restarted successfully"
+    log_success "Containers restarted successfully"
     echo ""
 
     log_info "Waiting for containers to start..."
@@ -613,7 +616,7 @@ ${BLUE}Troubleshooting:${NC}
   • View logs:          alm logs
   • Monitor updates:    alm pull
   • Restart service:    alm restart
-  • Service status:     sudo systemctl status strealer-container.service
+  • Restart containers: alm restart
   • Docker status:      sudo systemctl status docker
 
 ${BLUE}Service Ports:${NC}
