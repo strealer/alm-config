@@ -1,0 +1,21 @@
+[Unit]
+Description=Trigger Puppet run when network becomes available
+Documentation=https://github.com/strealer/alm-config
+After=network-online.target
+Wants=network-online.target
+
+# Only run if Puppet hasn't been triggered this boot
+ConditionPathExists=!/var/lib/alm/puppet-triggered
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/puppet-network-trigger.sh
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=puppet-network-trigger
+
+[Install]
+WantedBy=multi-user.target
