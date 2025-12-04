@@ -445,6 +445,102 @@ EOF
 }
 
 #
+# Command: alm factory-reset
+# Complete reset to simulate fresh flash (removes Docker too)
+#
+cmd_factory_reset() {
+    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+        cat <<EOF
+Usage: alm factory-reset
+
+Reset device to a FRESH-BOOT state (like a newly flashed device).
+
+${RED}⚠️  DANGER ZONE - This goes beyond 'alm reset':${NC}
+  1. Removes ALL Docker containers and images
+  2. Uninstalls Docker completely
+  3. Deletes ALL ALM state and flags
+  4. Clears Puppet trigger flags
+  5. Triggers fresh Puppet run on next login
+
+After this, the next SSH login will:
+  • Show "Installing Docker..." progress
+  • Re-run full Puppet setup
+  • Pull fresh images and start containers
+
+Use this to:
+  • Test the full first-boot experience
+  • Simulate a completely fresh device
+  • Debug initial setup issues
+
+Requires: sudo privileges
+
+Examples:
+  alm factory-reset
+EOF
+        return 0
+    fi
+
+    echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║${NC}  ${RED}⚠️  DANGER: FACTORY RESET - REMOVES DOCKER ENTIRELY${NC}      ${RED}║${NC}"
+    echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "This will simulate a FRESH FLASH by:"
+    echo "  • Stopping and removing ALL containers"
+    echo "  • Removing ALL Docker images"
+    echo "  • Uninstalling Docker completely"
+    echo "  • Deleting all ALM state files"
+    echo "  • Clearing Puppet trigger flags"
+    echo ""
+    echo -e "${YELLOW}Next login will show full first-boot setup progress.${NC}"
+    echo ""
+
+    read -r -p "Type 'FACTORY RESET' to confirm: " response
+
+    if [[ "$response" != "FACTORY RESET" ]]; then
+        log_info "Factory reset cancelled"
+        return 0
+    fi
+
+    echo ""
+    log_info "Stopping services..."
+    sudo systemctl stop strealer-container.service 2>/dev/null || true
+    sudo systemctl stop docker 2>/dev/null || true
+
+    echo ""
+    log_info "Removing ALL containers..."
+    sudo docker rm -f $(sudo docker ps -aq) 2>/dev/null || true
+
+    echo ""
+    log_info "Removing ALL Docker images..."
+    sudo docker rmi -f $(sudo docker images -q) 2>/dev/null || true
+
+    echo ""
+    log_info "Removing Docker volumes..."
+    sudo docker volume rm $(sudo docker volume ls -q) 2>/dev/null || true
+
+    echo ""
+    log_info "Uninstalling Docker..."
+    sudo apt-get purge -y docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin 2>/dev/null || true
+    sudo rm -rf /var/lib/docker /etc/docker /var/lib/containerd
+
+    echo ""
+    log_info "Clearing ALM state files..."
+    sudo rm -rf /var/lib/alm
+    sudo rm -rf /opt/alm/config.sh 2>/dev/null || true
+
+    echo ""
+    log_success "Factory reset complete!"
+    echo ""
+    echo -e "${CYAN}Next steps:${NC}"
+    echo "  1. Log out and log back in as root"
+    echo "  2. The setup progress screen will appear"
+    echo "  3. Puppet will install Docker and configure everything"
+    echo ""
+    log_info "Run: exit"
+    echo ""
+}
+
+#
 # Command: alm help
 # Show usage information
 #
@@ -458,12 +554,13 @@ ${BLUE}Usage:${NC}
   alm <command> [options]
 
 ${BLUE}Commands:${NC}
-  ${GREEN}status${NC}       Show device and container status
-  ${GREEN}logs${NC}         Follow container logs in real-time
-  ${GREEN}pull${NC}         Monitor Docker image pull progress
-  ${GREEN}restart${NC}      Restart ALM service
-  ${GREEN}reset${NC}        Reset device for fresh registration (deletes all data)
-  ${GREEN}help${NC}         Show this help message
+  ${GREEN}status${NC}         Show device and container status
+  ${GREEN}logs${NC}           Follow container logs in real-time
+  ${GREEN}pull${NC}           Monitor Docker image pull progress
+  ${GREEN}restart${NC}        Restart ALM service
+  ${GREEN}reset${NC}          Reset containers and volumes (keeps Docker)
+  ${GREEN}factory-reset${NC}  Complete reset to fresh-boot state (removes Docker)
+  ${GREEN}help${NC}           Show this help message
 
 ${BLUE}Examples:${NC}
   alm status            # Check device and container status
@@ -471,13 +568,15 @@ ${BLUE}Examples:${NC}
   alm logs main         # View main container logs (application)
   alm pull -f           # Monitor image download progress in real-time
   alm restart           # Restart ALM service
-  alm reset             # Reset device to start fresh
+  alm reset             # Reset containers (quick reset)
+  alm factory-reset     # Full reset like fresh flash (for testing)
 
 ${BLUE}Get Help for Specific Commands:${NC}
   alm logs --help
   alm pull --help
   alm restart --help
   alm reset --help
+  alm factory-reset --help
 
 ${BLUE}Automated Registration:${NC}
   • Device registration is FULLY AUTOMATED
@@ -623,6 +722,9 @@ main() {
             ;;
         reset)
             cmd_reset "$@"
+            ;;
+        factory-reset)
+            cmd_factory_reset "$@"
             ;;
         help|--help|-h)
             cmd_help
