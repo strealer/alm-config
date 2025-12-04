@@ -35,9 +35,9 @@ readonly RED='\033[0;31m'
 readonly GRAY='\033[0;90m'
 readonly NC='\033[0m' # No Color
 
-# Check network connectivity to Puppet server
+# Check network connectivity (using ping to DNS server)
 check_network() {
-    if curl -sfI --connect-timeout 5 "https://puppet.strealer.io" >/dev/null 2>&1; then
+    if ping -c1 -W2 8.8.8.8 >/dev/null 2>&1; then
         return 0
     fi
     return 1
