@@ -1,12 +1,25 @@
+# ============================================================================
+# Strealer ALM Puppet Agent Bootstrap Service
+# ============================================================================
+# IMPORTANT: This file exists in TWO repositories:
+# 1. alm-config/system-files/configure_puppet_agent.service (PUBLIC - used by Puppet)
+# 2. alm-infra/puppet-infra-config/client-setup/configure_puppet_agent.service (PRIVATE)
+#
+# When updating this file, ALWAYS update BOTH locations!
+# ============================================================================
+
 [Unit]
 Description=Run Puppet Bootstrap at First Boot Until Successful
 After=network-online.target
 Wants=network-online.target
+# Only run if Puppet hasn't been configured yet
+ConditionPathExists=!/var/lib/puppet-config-done
 
 [Service]
 Type=simple
 ExecStart=/opt/configure_puppet_agent.sh
-Restart=always
+# Only restart on failure, not on success (exit 0)
+Restart=on-failure
 RestartSec=30
 StartLimitBurst=0
 StandardOutput=journal

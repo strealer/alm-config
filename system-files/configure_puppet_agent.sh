@@ -3,6 +3,12 @@
 # ============================================================================
 # Strealer ALM Puppet Agent Setup Script
 # ============================================================================
+# IMPORTANT: This file exists in TWO repositories:
+# 1. alm-config/system-files/configure_puppet_agent.sh (PUBLIC - used by Puppet/pi-gen)
+# 2. alm-infra/puppet-infra-config/client-setup/configure_puppet_agent.sh (PRIVATE)
+#
+# When updating this file, ALWAYS update BOTH locations!
+# ============================================================================
 # 
 # USAGE:
 #   curl -fsSL https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh \
