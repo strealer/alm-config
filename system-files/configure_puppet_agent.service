@@ -1,11 +1,8 @@
 # ============================================================================
 # Strealer ALM Puppet Agent Bootstrap Service
 # ============================================================================
-# IMPORTANT: This file exists in TWO repositories:
-# 1. alm-config/system-files/configure_puppet_agent.service (PUBLIC - used by Puppet)
-# 2. alm-infra/puppet-infra-config/client-setup/configure_puppet_agent.service (PRIVATE)
-#
-# When updating this file, ALWAYS update BOTH locations!
+# SOURCE: alm-config/system-files/configure_puppet_agent.service
+# DEPLOYED BY: Puppet (downloads from public GitHub raw URL)
 # ============================================================================
 
 [Unit]
