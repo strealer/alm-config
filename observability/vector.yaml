@@ -326,21 +326,35 @@ transforms:
       if length(parts) >= 2 {
         .device_hostname = parts[1]
       }
-  # NEW: Generate Prometheus metrics from Docker stats
+  # NEW: Generate Prometheus metrics from Docker stats (uses cgroup-based fields)
   docker_container_metrics:
     type: log_to_metric
     inputs: ["docker_stats_to_metrics"]
     metrics:
       - type: gauge
-        field: cpu_percent
-        name: container_cpu_percent
+        field: cpu_usec
+        name: container_cpu_usec
         namespace: docker
         tags:
           container: "{{ name }}"
           host: "{{ device_hostname }}"
       - type: gauge
-        field: mem_percent
-        name: container_memory_percent
+        field: mem_mb
+        name: container_memory_mb
+        namespace: docker
+        tags:
+          container: "{{ name }}"
+          host: "{{ device_hostname }}"
+      - type: gauge
+        field: io_read_bytes
+        name: container_io_read_bytes
+        namespace: docker
+        tags:
+          container: "{{ name }}"
+          host: "{{ device_hostname }}"
+      - type: gauge
+        field: io_write_bytes
+        name: container_io_write_bytes
         namespace: docker
         tags:
           container: "{{ name }}"
