@@ -134,6 +134,19 @@ sources:
       method: "newline_delimited"
     decoding:
       codec: "json"
+  # PSI (Pressure Stall Information) - High-resolution resource pressure monitoring
+  # Captures ALL CPU/Memory/IO stalls via cumulative 'total' counters (no spike is ever missed)
+  # Ref: https://docs.kernel.org/accounting/psi.html
+  psi_pressure:
+    type: "exec"
+    command: ["/bin/sh", "-c", "if [ -f /proc/pressure/cpu ]; then cpu_some=$$(awk '/^some/{print $$NF}' /proc/pressure/cpu | cut -d= -f2); cpu_full=$$(awk '/^full/{print $$NF}' /proc/pressure/cpu | cut -d= -f2); mem_some=$$(awk '/^some/{print $$NF}' /proc/pressure/memory | cut -d= -f2); mem_full=$$(awk '/^full/{print $$NF}' /proc/pressure/memory | cut -d= -f2); io_some=$$(awk '/^some/{print $$NF}' /proc/pressure/io | cut -d= -f2); io_full=$$(awk '/^full/{print $$NF}' /proc/pressure/io | cut -d= -f2); printf '{\"psi_cpu_some\":%s,\"psi_cpu_full\":%s,\"psi_mem_some\":%s,\"psi_mem_full\":%s,\"psi_io_some\":%s,\"psi_io_full\":%s}\\n' \"$$cpu_some\" \"$$cpu_full\" \"$$mem_some\" \"$$mem_full\" \"$$io_some\" \"$$io_full\"; fi"]
+    mode: "scheduled"
+    scheduled:
+      exec_interval_secs: 1 # High-resolution: 1 second polling
+    framing:
+      method: "newline_delimited"
+    decoding:
+      codec: "json"
 # ============================================================================
 # TRANSFORMS
 # ============================================================================
@@ -153,7 +166,7 @@ transforms:
   # OPTIMIZED: Replaced Lua with VRL (40% faster, parallelizable)
   add_metadata:
     type: remap
-    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "kernel_logs", "ip_info", "service_health", "top_processes", "docker_images_info"]
+    inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "kernel_logs", "ip_info", "service_health", "top_processes", "docker_images_info", "psi_pressure"]
     source: |
       # Get hostname from system (cached by Vector)
       hostname, _ = get_hostname()
@@ -189,6 +202,11 @@ transforms:
       # Set source_type for docker_images_info (has img_digest field)
       if exists(.img_digest) {
         .source_type = "docker_images_info"
+      }
+
+      # Set source_type for PSI pressure data (has psi_cpu_some field)
+      if exists(.psi_cpu_some) {
+        .source_type = "psi_pressure"
       }
 
       # Default priority_label for non-system logs
