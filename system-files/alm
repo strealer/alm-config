@@ -71,9 +71,7 @@ get_container_suffix() {
 
 # Get main container image checksum (SHA256)
 get_image_checksum() {
-    local suffix
-    suffix=$(get_container_suffix)
-    local main_container="alm_${suffix}"
+    local main_container="alm"
 
     # Get image ID from running/stopped container
     local image_id
@@ -126,13 +124,11 @@ EOF
     local ip
     local hostname
     local arch
-    local suffix
     local checksum
 
     ip=$(get_device_ip)
     hostname=$(hostname)
     arch=$(get_architecture)
-    suffix=$(get_container_suffix)
     checksum=$(get_image_checksum)
 
     echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
@@ -162,8 +158,8 @@ EOF
 
     echo -e "${BLUE}Container Status:${NC}"
 
-    local init_container="alm_init_${suffix}"
-    local main_container="alm_${suffix}"
+    local init_container="alm_init"
+    local main_container="alm"
 
     # Check init container (should exit after successful registration)
     if sudo docker ps -a --format "{{.Names}}" | grep -Fxq "$init_container"; then
@@ -269,19 +265,16 @@ EOF
         esac
     done
 
-    local suffix
-    suffix=$(get_container_suffix)
-
     local container_name
     case "$container_type" in
         init)
-            container_name="alm_init_${suffix}"
+            container_name="alm_init"
             ;;
         telemetry)
             container_name="alm_telemetry"
             ;;
         *)
-            container_name="alm_${suffix}"
+            container_name="alm"
             ;;
     esac
 
@@ -334,18 +327,12 @@ EOF
         return 1
     }
 
-    local suffix
-    suffix=$(get_container_suffix)
-
     log_info "Stopping containers..."
     sudo docker compose down 2>/dev/null || true
 
     log_info "Starting containers..."
-    if [[ "$suffix" == "arm64" ]]; then
-        sudo docker compose up -d --remove-orphans alm_init alm alm_telemetry
-    else
-        sudo docker compose up -d --remove-orphans alm_init alm alm_telemetry
-    fi
+    # Uses unified service names (multi-arch auto-detection by Docker)
+    sudo docker compose up -d --remove-orphans alm_init alm alm_telemetry
 
     log_success "Containers restarted successfully"
     echo ""
@@ -412,15 +399,12 @@ EOF
     echo ""
     log_info "Removing containers..."
 
-    local suffix
-    suffix=$(get_container_suffix)
-
-    # Stop and remove containers
-    sudo docker stop "alm_init_${suffix}" 2>/dev/null || true
-    sudo docker stop "alm_${suffix}" 2>/dev/null || true
+    # Stop and remove containers (unified names - no architecture suffix)
+    sudo docker stop "alm_init" 2>/dev/null || true
+    sudo docker stop "alm" 2>/dev/null || true
     sudo docker stop "alm_telemetry" 2>/dev/null || true
-    sudo docker rm "alm_init_${suffix}" 2>/dev/null || true
-    sudo docker rm "alm_${suffix}" 2>/dev/null || true
+    sudo docker rm "alm_init" 2>/dev/null || true
+    sudo docker rm "alm" 2>/dev/null || true
     sudo docker rm "alm_telemetry" 2>/dev/null || true
 
     echo ""

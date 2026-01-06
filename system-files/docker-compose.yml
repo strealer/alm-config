@@ -127,18 +127,20 @@ volumes:
 #
 # ZERO-SETUP DEPLOYMENT:
 # 1. Copy docker-compose.yml to any directory (e.g., /opt/alm)
-# 2. Run: `docker compose up -d alm_init_arm64` (or `_amd64`) so init can
-#    populate the shared volumes. After INIT_DONE=1, start `alm_arm64` and
-#    `alm_telemetry`.
+# 2. Run: `docker compose up -d` - services start in dependency order:
+#    - alm_init runs first, populates shared volumes, then exits
+#    - alm (main app) starts after init completes
+#    - alm_telemetry starts for cron-based reporting
 #
 # MULTI-ARCH DEPLOYMENT (AUTOMATIC):
 # The docker images are multi-arch manifests. Docker automatically pulls
 # the correct architecture (ARM64 or AMD64) based on the host platform.
 # No architecture-specific configuration needed!
 #
-# DEPLOYMENT:
-# - ARM64 (Raspberry Pi): start `alm_init_arm64` + `alm_arm64`
-# - AMD64 (Servers): start `alm_init_amd64` + `alm_amd64`
+# SERVICE NAMES (Unified - same on all architectures):
+# - alm_init: Registration and config generation
+# - alm: Main application (Java + nginx)
+# - alm_telemetry: Cron-based metrics reporting
 #
 # CONFIGURATION FLOW:
 # 1. Init writes configs/keys into `alm_config` + `alm_persist`
