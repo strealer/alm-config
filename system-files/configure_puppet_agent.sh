@@ -6,13 +6,25 @@
 # SOURCE: alm-config/system-files/configure_puppet_agent.sh
 # DEPLOYED BY: Puppet (downloads from public GitHub raw URL), pi-gen (baked into image)
 # ============================================================================
-# 
-# USAGE:
-#   curl -fsSL https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh \
-#        -o configure_puppet_agent.sh && bash -x configure_puppet_agent.sh
 #
-# OR (direct execution without saving):
+# USAGE:
+#   # Default (production environment):
 #   curl -fsSL https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh | bash
+#
+#   # Staging environment:
+#   curl -fsSL https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh | ALM_ENVIRONMENT=staging bash
+#
+#   # Or set environment before running:
+#   export ALM_ENVIRONMENT=staging
+#   curl -fsSL https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh | bash
+#
+#   # Or create flag file before first boot (for pi-gen images):
+#   echo "staging" > /etc/alm-environment
+#
+# ENVIRONMENT SELECTION:
+#   - **staging**: Hostname prefix 'stg-', uses TEST content, fapi-test.strealer.io
+#   - **production**: Hostname prefix 'prod-', uses PRODUCTION+PRELIVE, fapi.strealer.io
+#   - Default: production (if not specified)
 #
 # WHAT THIS SCRIPT DOES:
 # 1. **Installs Puppet 8** (if not present) - Downloads and installs from official Puppet repos
@@ -234,62 +246,108 @@ install_puppet_agent() {
 }
 
 # ============================================================================
+# detect_alm_environment()
+# ============================================================================
+#
+# WHAT THIS FUNCTION DOES:
+# - **Checks environment variable** - ALM_ENVIRONMENT (staging or production)
+# - **Checks flag file** - /etc/alm-environment (for pi-gen baked images)
+# - **Defaults to production** - If not specified, assumes production for safety
+#
+# ENVIRONMENT VALUES:
+# - staging: Device will use TEST content, fapi-test.strealer.io
+# - production: Device will use PRODUCTION+PRELIVE, fapi.strealer.io
+# ============================================================================
+detect_alm_environment() {
+  local env_value
+
+  # Priority 1: Environment variable
+  if [ -n "$ALM_ENVIRONMENT" ]; then
+    env_value="$ALM_ENVIRONMENT"
+  # Priority 2: Flag file (for pi-gen images)
+  elif [ -f /etc/alm-environment ]; then
+    env_value=$(cat /etc/alm-environment | tr -d '[:space:]')
+  # Default: production
+  else
+    env_value="production"
+  fi
+
+  # Normalize to lowercase and validate
+  env_value=$(echo "$env_value" | tr '[:upper:]' '[:lower:]')
+  case "$env_value" in
+    staging|stg) echo "staging" ;;
+    *) echo "production" ;;
+  esac
+}
+
+# ============================================================================
 # generate_hostname()
 # ============================================================================
-# 
+#
 # WHAT THIS FUNCTION DOES:
+# - **Environment Prefix** - Adds 'stg-' or 'prod-' based on ALM_ENVIRONMENT
 # - **Hardware Detection** - Identifies device type (Raspberry Pi, AMD64 server, or generic)
 # - **Unique ID Generation** - Creates stable hostname based on hardware serial/UUID
 # - **Model Classification** - Detects specific RPi models (Pi 4, Pi 5, Zero W, etc.)
 # - **Vendor Recognition** - Identifies AMD64 system manufacturers (Dell, HP, Lenovo, etc.)
-# - **Timestamp Addition** - Adds deployment timestamp for uniqueness
 #
 # HOSTNAME PATTERNS GENERATED:
-# **Raspberry Pi Devices:**
-# - rpi4-12345678-20240115143022 (Pi 4 Model B)
-# - rpi5-abcdef12-20240115143022 (Pi 5 Model B)
-# - rpizw-87654321-20240115143022 (Pi Zero W)
-# - rpicm4-fedcba98-20240115143022 (Compute Module 4)
+# **Staging Raspberry Pi Devices:**
+# - stg-rpi4-12345678 (Pi 4 Model B, staging)
+# - stg-rpi5-abcdef12 (Pi 5 Model B, staging)
 #
-# **AMD64 Servers:**
-# - amd-dell-optiplex-9a8b7c6d-20240115143022 (Dell OptiPlex)
-# - amd-hp-elitedesk-1f2e3d4c-20240115143022 (HP EliteDesk)
-# - amd-vmware-vmware-5b6a7c8d-20240115143022 (VMware VM)
+# **Production Raspberry Pi Devices:**
+# - prod-rpi4-12345678 (Pi 4 Model B, production)
+# - prod-rpi5-abcdef12 (Pi 5 Model B, production)
+#
+# **Staging AMD64 Servers:**
+# - stg-amd-dell-optiplex-9a8b7c6d (Dell OptiPlex, staging)
+#
+# **Production AMD64 Servers:**
+# - prod-amd-dell-optiplex-9a8b7c6d (Dell OptiPlex, production)
 #
 # **Development/Generic Systems:**
-# - dev-4f5e6d7c-20240115143022 (Generated UUID for unknown hardware)
+# - stg-dev-4f5e6d7c or prod-dev-4f5e6d7c
 #
 # WHY HARDWARE-BASED HOSTNAMES:
 # - **Puppet Identification** - Each device gets unique certificate/configuration
+# - **Environment Classification** - Puppet uses hostname prefix to determine environment
 # - **Infrastructure Tracking** - Easy identification in monitoring and logs
 # - **Deployment Consistency** - Same device always gets same base hostname
-# - **Automatic Classification** - Puppet automatically applies correct profile based on hostname pattern
 # ============================================================================
 generate_hostname() {
-  local rpi_serial amd_uuid host_id device_vendor device_model rpi_model final_hostname persistent_uuid uuid_path
+  local rpi_serial amd_uuid host_id device_vendor device_model rpi_model final_hostname persistent_uuid uuid_path env_prefix
+
+  # Get environment prefix
+  local alm_env
+  alm_env=$(detect_alm_environment)
+  case "$alm_env" in
+    staging) env_prefix="stg" ;;
+    *) env_prefix="prod" ;;
+  esac
 
   if grep -q "^Serial" /proc/cpuinfo; then
     rpi_serial=$(awk '/^Serial/{print $3}' /proc/cpuinfo)
     rpi_model=$(tr -d '\0' </proc/device-tree/model 2>/dev/null)
     case "$rpi_model" in
-      *"Raspberry Pi 5 Model B"*)          host_id="rpi5-${rpi_serial: -8}" ;;
-      *"Raspberry Pi 4 Model B"*)          host_id="rpi4-${rpi_serial: -8}" ;;
-      *"Raspberry Pi 3 Model B Plus"*)     host_id="rpi3bp-${rpi_serial: -8}" ;;
-      *"Raspberry Pi 3 Model B"*)          host_id="rpi3b-${rpi_serial: -8}" ;;
-      *"Raspberry Pi 3 Model A Plus"*)     host_id="rpi3ap-${rpi_serial: -8}" ;;
-      *"Raspberry Pi 2 Model B"*)          host_id="rpi2b-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Model B Plus"*)       host_id="rpi1bp-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Model A Plus"*)       host_id="rpi1ap-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Model B Rev"*|"Raspberry Pi Model B"*) host_id="rpi1b-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Model A"*)            host_id="rpi1a-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Zero 2 W"*)           host_id="rpiz2w-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Zero W"*)             host_id="rpizw-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Zero"*)               host_id="rpiz-${rpi_serial: -8}" ;;
-      *"Compute Module 4"*)                host_id="rpicm4-${rpi_serial: -8}" ;;
-      *"Compute Module 3 Plus"*)           host_id="rpicm3p-${rpi_serial: -8}" ;;
-      *"Compute Module 3"*)                host_id="rpicm3-${rpi_serial: -8}" ;;
-      *"Compute Module"*)                  host_id="rpicm1-${rpi_serial: -8}" ;;
-      *)                                   host_id="rpi-${rpi_serial: -8}" ;;
+      *"Raspberry Pi 5 Model B"*)          host_id="${env_prefix}-rpi5-${rpi_serial: -8}" ;;
+      *"Raspberry Pi 4 Model B"*)          host_id="${env_prefix}-rpi4-${rpi_serial: -8}" ;;
+      *"Raspberry Pi 3 Model B Plus"*)     host_id="${env_prefix}-rpi3bp-${rpi_serial: -8}" ;;
+      *"Raspberry Pi 3 Model B"*)          host_id="${env_prefix}-rpi3b-${rpi_serial: -8}" ;;
+      *"Raspberry Pi 3 Model A Plus"*)     host_id="${env_prefix}-rpi3ap-${rpi_serial: -8}" ;;
+      *"Raspberry Pi 2 Model B"*)          host_id="${env_prefix}-rpi2b-${rpi_serial: -8}" ;;
+      *"Raspberry Pi Model B Plus"*)       host_id="${env_prefix}-rpi1bp-${rpi_serial: -8}" ;;
+      *"Raspberry Pi Model A Plus"*)       host_id="${env_prefix}-rpi1ap-${rpi_serial: -8}" ;;
+      *"Raspberry Pi Model B Rev"*|"Raspberry Pi Model B"*) host_id="${env_prefix}-rpi1b-${rpi_serial: -8}" ;;
+      *"Raspberry Pi Model A"*)            host_id="${env_prefix}-rpi1a-${rpi_serial: -8}" ;;
+      *"Raspberry Pi Zero 2 W"*)           host_id="${env_prefix}-rpiz2w-${rpi_serial: -8}" ;;
+      *"Raspberry Pi Zero W"*)             host_id="${env_prefix}-rpizw-${rpi_serial: -8}" ;;
+      *"Raspberry Pi Zero"*)               host_id="${env_prefix}-rpiz-${rpi_serial: -8}" ;;
+      *"Compute Module 4"*)                host_id="${env_prefix}-rpicm4-${rpi_serial: -8}" ;;
+      *"Compute Module 3 Plus"*)           host_id="${env_prefix}-rpicm3p-${rpi_serial: -8}" ;;
+      *"Compute Module 3"*)                host_id="${env_prefix}-rpicm3-${rpi_serial: -8}" ;;
+      *"Compute Module"*)                  host_id="${env_prefix}-rpicm1-${rpi_serial: -8}" ;;
+      *)                                   host_id="${env_prefix}-rpi-${rpi_serial: -8}" ;;
     esac
 
   elif [ -f /sys/class/dmi/id/product_uuid ]; then
@@ -311,16 +369,17 @@ generate_hostname() {
     esac
 
     device_model=$(echo "$device_model" | tr -cd '[:alnum:]')
-    host_id="amd-${device_vendor}-${device_model}-${amd_uuid: -8}"
+    host_id="${env_prefix}-amd-${device_vendor}-${device_model}-${amd_uuid: -8}"
 
   else
     uuid_path="/etc/device_uuid"
     [ ! -f "$uuid_path" ] && uuidgen | tee "$uuid_path" >/dev/null
     persistent_uuid=$(cat "$uuid_path" | tr -d '-')
-    host_id="dev-${persistent_uuid: -8}"
+    host_id="${env_prefix}-dev-${persistent_uuid: -8}"
   fi
 
-  final_hostname="${host_id}-$(date +%Y%m%d%H%M%S)"
+  # No timestamp - cleaner hostnames
+  final_hostname="${host_id}"
   echo "$final_hostname"
 }
 
@@ -435,10 +494,18 @@ main() {
   echo "=== Starting Puppet Configuration Script ==="
   echo "$(date): Beginning setup process"
 
+  # Detect and display environment
+  local detected_env
+  detected_env=$(detect_alm_environment)
+  echo "ALM Environment: ${detected_env}"
+  echo "  - Hostname prefix: $([ "$detected_env" = "staging" ] && echo "stg-" || echo "prod-")"
+  echo "  - Content: $([ "$detected_env" = "staging" ] && echo "TEST only" || echo "PRODUCTION + PRELIVE")"
+  echo "  - API: $([ "$detected_env" = "staging" ] && echo "fapi-test.strealer.io" || echo "fapi.strealer.io")"
+
   echo "Installing Puppet agent (if needed)..."
   install_puppet_agent || { echo "Error installing Puppet agent. Exiting."; exit 1; }
 
-  echo "Setting hardware-based hostname..."
+  echo "Setting hardware-based hostname with environment prefix..."
   apply_hostname || { echo "Error setting hostname. Exiting."; exit 1; }
 
   echo "Updating Puppet configuration..."
