@@ -60,6 +60,13 @@ sources:
       - load # System load averages (1m, 5m, 15m)
     scrape_interval_secs: 30
     namespace: host
+    # Exclude Docker internal mount points that cause permission errors
+    # See: https://vector.dev/docs/reference/configuration/sources/host_metrics/
+    filesystem:
+      mountpoints:
+        excludes:
+          - "/run/docker/netns/*" # Docker network namespaces (statvfs permission denied)
+          - "/var/lib/docker/*" # Docker internal storage
   # Collect IP information (Local and Public)
   ip_info:
     type: "exec"
