@@ -351,7 +351,7 @@ EOF
 cmd_reset() {
     if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
         cat <<EOF
-Usage: alm reset
+Usage: alm reset [-y|--yes]
 
 Reset the ALM device to start fresh registration.
 
@@ -361,6 +361,9 @@ ${RED}WARNING: This will:${NC}
   3. Remove Docker volumes
   4. Restart service for fresh automated setup
 
+Options:
+  -y, --yes    Skip confirmation prompt
+
 Use this when:
   • Registration is stuck or incomplete
   • Need to re-register the device
@@ -369,9 +372,15 @@ Use this when:
 Requires: sudo privileges
 
 Examples:
-  alm reset
+  alm reset        # Interactive with confirmation
+  alm reset -y     # Skip confirmation (for scripts)
 EOF
         return 0
+    fi
+
+    local skip_confirm=false
+    if [[ "${1:-}" == "-y" ]] || [[ "${1:-}" == "--yes" ]]; then
+        skip_confirm=true
     fi
 
     echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
@@ -385,11 +394,12 @@ EOF
     echo "  • Reset device to fresh state"
     echo ""
 
-    read -r -p "Are you sure you want to reset? [y/N]: " response
-
-    if [[ ! "$response" =~ ^[Yy]$ ]]; then
-        log_info "Reset cancelled"
-        return 0
+    if [[ "$skip_confirm" != "true" ]]; then
+        read -r -p "Are you sure you want to reset? [y/N]: " response
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            log_info "Reset cancelled"
+            return 0
+        fi
     fi
 
     echo ""
@@ -438,7 +448,7 @@ EOF
 cmd_factory_reset() {
     if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
         cat <<EOF
-Usage: alm factory-reset
+Usage: alm factory-reset [-y|--yes]
 
 Reset device to a FRESH-BOOT state (like a newly flashed device).
 
@@ -448,6 +458,9 @@ ${RED}⚠️  DANGER ZONE - This goes beyond 'alm reset':${NC}
   3. Clears Puppet certificate and agent state
   4. Deletes ALL ALM runtime state and config
   5. Re-enables first-boot configure_puppet_agent.service
+
+Options:
+  -y, --yes    Skip confirmation prompt (DANGEROUS!)
 
 ${BLUE}What is KEPT (pi-gen installed):${NC}
   • User accounts (almadmin, almuser, root)
@@ -469,9 +482,15 @@ Use this to:
 Requires: sudo privileges
 
 Examples:
-  alm factory-reset
+  alm factory-reset        # Interactive with confirmation
+  alm factory-reset -y     # Skip confirmation (DANGEROUS!)
 EOF
         return 0
+    fi
+
+    local skip_confirm=false
+    if [[ "${1:-}" == "-y" ]] || [[ "${1:-}" == "--yes" ]]; then
+        skip_confirm=true
     fi
 
     echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
@@ -491,11 +510,12 @@ EOF
     echo -e "${YELLOW}Next login will show full first-boot setup progress.${NC}"
     echo ""
 
-    read -r -p "Type 'FACTORY RESET' to confirm: " response
-
-    if [[ "$response" != "FACTORY RESET" ]]; then
-        log_info "Factory reset cancelled"
-        return 0
+    if [[ "$skip_confirm" != "true" ]]; then
+        read -r -p "Type 'FACTORY RESET' to confirm: " response
+        if [[ "$response" != "FACTORY RESET" ]]; then
+            log_info "Factory reset cancelled"
+            return 0
+        fi
     fi
 
     echo ""
