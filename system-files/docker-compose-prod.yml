@@ -96,5 +96,5 @@ volumes:
 # - Content routes: /media, /player, /renderer (production)
 #                   /media-prelive, /player-prelive, /renderer-prelive
 # - Shares database with PRELIVE environment
-# - Use hostname pattern: prod-rpi4-<serial> or rpi4-<serial> (legacy)
+# - Use hostname pattern: prod-rpi4-<serial> or prod-amd-<vendor>-<model>-<uuid>
 # ============================================================================
