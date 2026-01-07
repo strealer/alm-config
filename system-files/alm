@@ -402,9 +402,14 @@ EOF
         fi
     fi
 
+    cd /opt/alm 2>/dev/null || {
+        log_error "ALM directory not found at /opt/alm"
+        return 1
+    }
+
     echo ""
-    log_info "Stopping ALM service..."
-    sudo systemctl stop strealer-container.service 2>/dev/null || true
+    log_info "Stopping containers..."
+    sudo docker compose down 2>/dev/null || true
 
     echo ""
     log_info "Removing containers..."
@@ -420,8 +425,7 @@ EOF
     echo ""
     log_info "Removing Docker volumes..."
 
-    # Remove volumes
-    cd /opt/alm 2>/dev/null || true
+    # Remove volumes with docker compose
     sudo docker compose down -v 2>/dev/null || true
 
     # Clean up any orphaned volumes
@@ -430,12 +434,13 @@ EOF
     echo ""
     log_success "Reset complete!"
     echo ""
-    log_info "Restarting service for automated re-registration..."
+    log_info "Starting containers for automated re-registration..."
 
-    sudo systemctl start strealer-container.service
+    # Start containers using docker compose (Puppet manages this normally)
+    sudo docker compose up -d --remove-orphans alm_init alm alm_telemetry
 
     echo ""
-    log_success "Device is re-registering automatically"
+    log_success "Containers started - device is re-registering"
     log_info "Registration happens in background (no user action needed)"
     log_info "Check progress with: alm logs init"
     echo ""
@@ -520,21 +525,21 @@ EOF
 
     echo ""
     log_info "Stopping services..."
-    sudo systemctl stop strealer-container.service 2>/dev/null || true
+    cd /opt/alm 2>/dev/null && sudo docker compose down 2>/dev/null || true
     sudo systemctl stop docker 2>/dev/null || true
     sudo systemctl stop puppet 2>/dev/null || true
 
     echo ""
     log_info "Removing ALL Docker containers..."
-    sudo docker rm -f $(sudo docker ps -aq) 2>/dev/null || true
+    sudo docker ps -aq | xargs -r sudo docker rm -f 2>/dev/null || true
 
     echo ""
     log_info "Removing ALL Docker images..."
-    sudo docker rmi -f $(sudo docker images -q) 2>/dev/null || true
+    sudo docker images -q | xargs -r sudo docker rmi -f 2>/dev/null || true
 
     echo ""
     log_info "Removing Docker volumes..."
-    sudo docker volume rm $(sudo docker volume ls -q) 2>/dev/null || true
+    sudo docker volume ls -q | xargs -r sudo docker volume rm 2>/dev/null || true
 
     echo ""
     log_info "Uninstalling Docker..."
