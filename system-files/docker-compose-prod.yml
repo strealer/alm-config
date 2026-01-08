@@ -33,9 +33,8 @@ services:
       - ALM_ENVIRONMENT=production
       - MANAGEMENT_API_URL=https://fapi.strealer.io
       - REGISTRATION_API_URL=http://public.strealer.io/register/alm
-      - X_API_KEY=cwSL8sAAiT7QWyvMulL4f6Mtmet7klzV
+      - X_API_KEY=z-X5uIymRr64m5Lp6q8vPviurW8ANPIR
     restart: "no" # Run once until INIT_DONE=1, then exit
-
   # Dedicated telemetry worker that keeps cron_5m.sh running every five minutes.
   alm_telemetry:
     image: europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-telemetry/alm-telemetry:${ALM_TELEMETRY_TAG:-latest}
@@ -50,7 +49,6 @@ services:
     environment:
       - ALM_ENVIRONMENT=production
     restart: unless-stopped # Cron runner should always stay online
-
   # ========================================================================
   # PHASE 2: MAIN ALM APPLICATION CONTAINERS
   # ========================================================================
@@ -81,7 +79,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
-
 # ============================================================================
 # SHARED VOLUMES FOR CONFIGURATION MANAGEMENT
 # ============================================================================
