@@ -180,14 +180,9 @@ transforms:
     inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "kernel_logs", "ip_info", "service_health", "top_processes", "docker_images_info", "psi_pressure"]
     source: |
       # Get hostname from system (cached by Vector)
+      # Use full hostname for proper device identification (e.g., prod-rpi4-14b52e5c)
       hostname, _ = get_hostname()
       .device_hostname = hostname || "unknown"
-
-      # Extract device ID if hostname format is rpi4-HASH-TIMESTAMP
-      parts = split(.device_hostname, "-")
-      if length(parts) >= 2 {
-        .device_hostname = parts[1]
-      }
 
       .device_role = "alm-edge"
       .environment = "production"
@@ -247,15 +242,9 @@ transforms:
     type: remap
     inputs: ["host_metrics"]
     source: |
-      # Get hostname from system
+      # Get hostname from system - use full hostname for proper identification
       hostname, _ = get_hostname()
       device_hostname = hostname || "unknown"
-
-      # Extract device ID
-      parts = split(device_hostname, "-")
-      if length(parts) >= 2 {
-        device_hostname = parts[1]
-      }
 
       # Add to tags
       .tags.host = device_hostname
@@ -275,22 +264,14 @@ transforms:
     hooks:
       process: |
         function (event, emit)
-          -- Lazy load hostname
+          -- Lazy load hostname - use full hostname for proper identification
           if not _G.device_hostname then
             local f = io.open("/etc/hostname", "r")
             if f then
               local content = f:read("*all")
               f:close()
-              content = content:gsub("%s+", "")
-              local parts = {}
-              for part in string.gmatch(content, "[^-]+") do
-                table.insert(parts, part)
-              end
-              if #parts >= 2 then
-                _G.device_hostname = parts[2]
-              else
-                _G.device_hostname = content
-              end
+              -- Use full hostname, just trim whitespace
+              _G.device_hostname = content:gsub("%s+", "")
             else
               _G.device_hostname = "unknown"
             end
@@ -326,13 +307,9 @@ transforms:
         .mem_percent = to_float(replace(string!(.mem), "%", "")) ?? 0.0
       }
 
-      # Get hostname
+      # Get hostname - use full hostname for proper identification
       hostname, _ = get_hostname()
       .device_hostname = hostname || "unknown"
-      parts = split(.device_hostname, "-")
-      if length(parts) >= 2 {
-        .device_hostname = parts[1]
-      }
   # NEW: Generate Prometheus metrics from Docker stats (uses cgroup-based fields)
   docker_container_metrics:
     type: log_to_metric
@@ -379,14 +356,9 @@ transforms:
     type: remap
     inputs: ["nginx_parsed_logs"]
     source: |
-      # Get hostname from system or default to "unknown"
+      # Get hostname from system - use full hostname for proper identification
       hostname, _ = get_hostname()
       .device_hostname = hostname || "unknown"
-      # Extract device ID if hostname format is rpi4-HASH-TIMESTAMP
-      parts = split(.device_hostname, "-")
-      if length(parts) >= 2 {
-        .device_hostname = parts[1]
-      }
       # Update timestamp to now (so metrics aren't rejected as "out of bounds")
       .timestamp = now()
   # Generate metrics from parsed nginx logs (for Prometheus)
