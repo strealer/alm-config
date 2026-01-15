@@ -11,6 +11,16 @@
 
 set -euo pipefail
 
+# Docker command - use sudo only if not running as root
+# This ensures commands work both interactively and via SSH as root
+if [[ $EUID -eq 0 ]]; then
+    DOCKER_CMD="docker"
+    DOCKER_COMPOSE_CMD="docker compose"
+else
+    DOCKER_CMD="sudo docker"
+    DOCKER_COMPOSE_CMD="sudo docker compose"
+fi
+
 # Colors for output (use $'...' syntax for escape sequence interpretation)
 readonly RED=$'\033[0;31m'
 readonly GREEN=$'\033[0;32m'
@@ -75,7 +85,7 @@ get_image_checksum() {
 
     # Get image ID from running/stopped container
     local image_id
-    image_id=$(sudo docker ps -a --filter "name=^${main_container}$" --format "{{.Image}}" 2>/dev/null)
+    image_id=$($DOCKER_CMD ps -a --filter "name=^${main_container}$" --format "{{.Image}}" 2>/dev/null)
 
     if [[ -z "$image_id" ]]; then
         echo "unknown"
@@ -84,14 +94,14 @@ get_image_checksum() {
 
     # Get full image digest
     local digest
-    digest=$(sudo docker inspect --format='{{index .RepoDigests 0}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{64}' || echo "")
+    digest=$($DOCKER_CMD inspect --format='{{index .RepoDigests 0}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{64}' || echo "")
 
     if [[ -n "$digest" ]]; then
         # Return first 12 characters of SHA256
         echo "${digest:0:12}"
     else
         # Fallback to short image ID
-        sudo docker inspect --format='{{.ID}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{12}' || echo "unknown"
+        $DOCKER_CMD inspect --format='{{.ID}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{12}' || echo "unknown"
     fi
 }
 
@@ -162,8 +172,8 @@ EOF
     local main_container="alm"
 
     # Check init container (should exit after successful registration)
-    if sudo docker ps -a --format "{{.Names}}" | grep -Fxq "$init_container"; then
-        init_status=$(sudo docker ps -a --filter "name=^${init_container}$" --format "{{.Status}}")
+    if $DOCKER_CMD ps -a --format "{{.Names}}" | grep -Fxq "$init_container"; then
+        init_status=$($DOCKER_CMD ps -a --filter "name=^${init_container}$" --format "{{.Status}}")
         if echo "$init_status" | head -n1 | grep -q "Exited (0)"; then
             log_success "Init container: Completed successfully"
             echo "    Registration complete, device initialized"
@@ -176,7 +186,7 @@ EOF
     fi
 
     # Check main container (via HTTP on port 80)
-    if sudo docker ps -a --format "{{.Names}}" | grep -Fxq "$main_container"; then
+    if $DOCKER_CMD ps -a --format "{{.Names}}" | grep -Fxq "$main_container"; then
         if is_container_healthy 80; then
             log_success "Main container: Running"
             echo "    Port 80: Application service"
@@ -194,7 +204,7 @@ EOF
 
     echo ""
     echo -e "${BLUE}Telemetry Worker:${NC}"
-    telemetry_status=$(sudo docker ps -a --filter "name=^alm_telemetry$" --format "{{.Status}}")
+    telemetry_status=$($DOCKER_CMD ps -a --filter "name=^alm_telemetry$" --format "{{.Status}}")
     if [[ -n "$telemetry_status" ]]; then
         if echo "$telemetry_status" | grep -qi "Up"; then
             log_success "Telemetry container: Running"
@@ -278,17 +288,33 @@ EOF
             ;;
     esac
 
-    # Show logs using sudo docker (handle gracefully if fails)
+    # Check if container exists
+    if ! $DOCKER_CMD ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$container_name"; then
+        log_error "Container '$container_name' does not exist"
+        echo ""
+        echo "This usually means:"
+        if [[ "$container_name" == "alm_init" ]]; then
+            echo "  • Device setup is still in progress (Puppet running)"
+            echo "  • Init container completed and was removed (check 'alm logs' for main container)"
+        else
+            echo "  • Device setup is still in progress"
+            echo "  • Containers haven't been started yet"
+        fi
+        echo ""
+        echo "Run 'alm status' to check current state"
+        return 1
+    fi
+
     log_info "Showing logs for: $container_name"
     echo ""
 
     if [[ "$follow" == true ]]; then
-        sudo docker logs -f --tail "$tail_lines" "$container_name" 2>/dev/null || {
+        $DOCKER_CMD logs -f --tail "$tail_lines" "$container_name" 2>&1 || {
             log_error "Could not access container logs (requires sudo/docker access)"
             return 1
         }
     else
-        sudo docker logs --tail "$tail_lines" "$container_name" 2>/dev/null || {
+        $DOCKER_CMD logs --tail "$tail_lines" "$container_name" 2>&1 || {
             log_error "Could not access container logs (requires sudo/docker access)"
             return 1
         }
@@ -328,11 +354,11 @@ EOF
     }
 
     log_info "Stopping containers..."
-    sudo docker compose down 2>/dev/null || true
+    $DOCKER_COMPOSE_CMD down 2>/dev/null || true
 
     log_info "Starting containers..."
     # Uses unified service names (multi-arch auto-detection by Docker)
-    sudo docker compose up -d --remove-orphans alm_init alm alm_telemetry
+    $DOCKER_COMPOSE_CMD up -d --remove-orphans alm_init alm alm_telemetry
 
     log_success "Containers restarted successfully"
     echo ""
@@ -409,27 +435,28 @@ EOF
 
     echo ""
     log_info "Stopping containers..."
-    sudo docker compose down 2>/dev/null || true
+    $DOCKER_COMPOSE_CMD down 2>/dev/null || true
 
     echo ""
     log_info "Removing containers..."
 
     # Stop and remove containers (unified names - no architecture suffix)
-    sudo docker stop "alm_init" 2>/dev/null || true
-    sudo docker stop "alm" 2>/dev/null || true
-    sudo docker stop "alm_telemetry" 2>/dev/null || true
-    sudo docker rm "alm_init" 2>/dev/null || true
-    sudo docker rm "alm" 2>/dev/null || true
-    sudo docker rm "alm_telemetry" 2>/dev/null || true
+    $DOCKER_CMD stop "alm_init" 2>/dev/null || true
+    $DOCKER_CMD stop "alm" 2>/dev/null || true
+    $DOCKER_CMD stop "alm_telemetry" 2>/dev/null || true
+    $DOCKER_CMD rm "alm_init" 2>/dev/null || true
+    $DOCKER_CMD rm "alm" 2>/dev/null || true
+    $DOCKER_CMD rm "alm_telemetry" 2>/dev/null || true
 
     echo ""
     log_info "Removing Docker volumes..."
 
     # Remove volumes with docker compose
-    sudo docker compose down -v 2>/dev/null || true
+    $DOCKER_COMPOSE_CMD down -v 2>/dev/null || true
 
     # Clean up any orphaned volumes
-    sudo docker volume ls -q | grep -E "alm_config|alm_persist" | xargs -r sudo docker volume rm 2>/dev/null || true
+    # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
+    $DOCKER_CMD volume ls -q | grep -E "alm_config|alm_persist" | xargs -r $DOCKER_CMD volume rm 2>/dev/null || true
 
     echo ""
     log_success "Reset complete!"
@@ -437,7 +464,7 @@ EOF
     log_info "Starting containers for automated re-registration..."
 
     # Start containers using docker compose (Puppet manages this normally)
-    sudo docker compose up -d --remove-orphans alm_init alm alm_telemetry
+    $DOCKER_COMPOSE_CMD up -d --remove-orphans alm_init alm alm_telemetry
 
     echo ""
     log_success "Containers started - device is re-registering"
@@ -525,21 +552,24 @@ EOF
 
     echo ""
     log_info "Stopping services..."
-    cd /opt/alm 2>/dev/null && sudo docker compose down 2>/dev/null || true
+    cd /opt/alm 2>/dev/null && $DOCKER_COMPOSE_CMD down 2>/dev/null || true
     sudo systemctl stop docker 2>/dev/null || true
     sudo systemctl stop puppet 2>/dev/null || true
 
     echo ""
     log_info "Removing ALL Docker containers..."
-    sudo docker ps -aq | xargs -r sudo docker rm -f 2>/dev/null || true
+    # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
+    $DOCKER_CMD ps -aq | xargs -r $DOCKER_CMD rm -f 2>/dev/null || true
 
     echo ""
     log_info "Removing ALL Docker images..."
-    sudo docker images -q | xargs -r sudo docker rmi -f 2>/dev/null || true
+    # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
+    $DOCKER_CMD images -q | xargs -r $DOCKER_CMD rmi -f 2>/dev/null || true
 
     echo ""
     log_info "Removing Docker volumes..."
-    sudo docker volume ls -q | xargs -r sudo docker volume rm 2>/dev/null || true
+    # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
+    $DOCKER_CMD volume ls -q | xargs -r $DOCKER_CMD volume rm 2>/dev/null || true
 
     echo ""
     log_info "Uninstalling Docker..."
