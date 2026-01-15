@@ -1,13 +1,36 @@
 #!/bin/bash
 # ============================================================================
-# ALM Setup Progress Display
+# ALM Setup Progress Display (v2.0)
 # ============================================================================
 #
 # WHAT THIS SCRIPT DOES:
 # - Displays real-time setup progress during first-time device initialization
-# - Shows progress bars for Docker installation, image pulls, configuration
-# - Only runs during initial setup (not on subsequent logins)
+# - Uses state files (cloud-init style) for accurate progress tracking
+# - Works for ALL users (almuser, almadmin, root) - no docker access needed
+# - Detects and reports specific error conditions
 # - Auto-called from bashrc on SSH login
+#
+# STATE FILE APPROACH:
+# - Progress tracked via state files in /var/lib/alm/state/
+# - Puppet/root creates state files as each step completes
+# - All users can read state files (644 permissions)
+# - Inspired by cloud-init's semaphore system
+#
+# STEPS TRACKED (10 total):
+#  1. Docker installed       - /var/lib/alm/state/01_docker_installed
+#  2. Docker running         - /var/lib/alm/state/02_docker_running
+#  3. Puppet installed       - /var/lib/alm/state/03_puppet_installed
+#  4. Puppet configured      - /var/lib/alm/state/04_puppet_configured
+#  5. Puppet cert valid      - /var/lib/alm/state/05_puppet_cert_ok
+#  6. Puppet run success     - /var/lib/alm/state/06_puppet_run_ok
+#  7. GCP token available    - /var/lib/alm/state/07_gcp_token_available
+#  8. Images pulled          - /var/lib/alm/state/08_images_pulled
+#  9. Init complete          - /var/lib/alm/state/09_init_complete
+# 10. Service responding     - /var/lib/alm/state/10_service_responding
+#
+# ERROR DETECTION:
+# - /var/lib/alm/state/error_* files indicate specific issues
+# - Script shows helpful troubleshooting info when errors detected
 #
 # USAGE:
 # - Automatically called from .bashrc during first boot
@@ -15,16 +38,16 @@
 #
 # DEPLOYMENT:
 # - Deployed from public alm-config repository via Puppet
-# - Integrated into bashrc for all users (almuser, almadmin, root)
+# - State files created by Puppet profiles during setup
 # ============================================================================
 
 set -euo pipefail
 
-# State files
-SETUP_COMPLETE_FLAG="/var/lib/alm/setup_complete"
-SETUP_STATE_DIR="/var/lib/alm/setup_state"
-PUPPET_LAST_RUN="/opt/puppetlabs/puppet/cache/state/last_run_report.yaml"
+# State directory and files
+STATE_DIR="/var/lib/alm/state"
+SETUP_COMPLETE="${STATE_DIR}/10_service_responding"
 PUPPET_TRIGGERED_FLAG="/var/lib/alm/puppet_triggered_this_boot"
+PUPPET_LAST_RUN="/opt/puppetlabs/puppet/cache/state/last_run_report.yaml"
 
 # Colors
 readonly GREEN='\033[0;32m'
@@ -33,291 +56,298 @@ readonly BLUE='\033[0;34m'
 readonly CYAN='\033[0;36m'
 readonly RED='\033[0;31m'
 readonly GRAY='\033[0;90m'
+readonly BOLD='\033[1m'
 readonly NC='\033[0m' # No Color
 
-# Check network connectivity (using ping to DNS server)
-check_network() {
-    if ping -c1 -W2 8.8.8.8 >/dev/null 2>&1; then
-        return 0
+# Step definitions (number, state_file_suffix, description, active_description)
+declare -a STEPS=(
+    "01|docker_installed|Docker installed|Installing Docker..."
+    "02|docker_running|Docker service running|Starting Docker service..."
+    "03|puppet_installed|Puppet agent installed|Installing Puppet agent..."
+    "04|puppet_configured|Puppet configured|Configuring Puppet agent..."
+    "05|puppet_cert_ok|Puppet certificate valid|Obtaining Puppet certificate..."
+    "06|puppet_run_ok|Puppet run successful|Running Puppet configuration..."
+    "07|gcp_token_available|Registry authentication ready|Setting up registry access..."
+    "08|images_pulled|Docker images pulled|Pulling Docker images (2-4 min)..."
+    "09|init_complete|Device registration complete|Registering device..."
+    "10|service_responding|Service responding|Starting ALM service..."
+)
+
+# ============================================================================
+# State File Functions
+# ============================================================================
+
+# Create state directory if it doesn't exist (called by root/Puppet)
+ensure_state_dir() {
+    if [[ ! -d "$STATE_DIR" ]]; then
+        mkdir -p "$STATE_DIR" 2>/dev/null || true
+        chmod 755 "$STATE_DIR" 2>/dev/null || true
     fi
-    return 1
 }
 
-# Check if Puppet is currently running (works for all users)
-is_puppet_running() {
-    # Method 1: Check for puppet agent process (works for all users)
-    if pgrep -f "puppet agent" >/dev/null 2>&1; then
-        return 0
-    fi
-    
-    # Method 2: Check lockfile (may not be readable by non-root)
-    local lockfile="/opt/puppetlabs/puppet/cache/state/agent_catalog_run.lock"
-    if [ -f "$lockfile" ] 2>/dev/null; then
-        return 0
-    fi
-    
-    return 1
-}
+# Check if a step is complete (by state file)
+is_step_complete() {
+    local step_num="$1"
+    local state_file="${STATE_DIR}/${step_num}_*"
 
-# Trigger Puppet run if needed (only for root user)
-# Returns: 0 = triggered or not needed, 1 = no network
-trigger_puppet_if_needed() {
-    local current_user
-    current_user=$(whoami)
-    
-    # Only root can trigger Puppet
-    if [[ "$current_user" != "root" ]]; then
-        return 0
-    fi
-    
-    # Skip if already triggered this boot
-    if [ -f "$PUPPET_TRIGGERED_FLAG" ]; then
-        return 0
-    fi
-    
-    # Check if setup is already complete
-    if is_setup_complete; then
-        return 0
-    fi
-    
-    # Check network connectivity
-    if ! check_network; then
-        return 1  # No network
-    fi
-    
-    # Check if Puppet has run successfully recently (last 5 minutes)
-    if [ -f "$PUPPET_LAST_RUN" ]; then
-        local last_run_time
-        last_run_time=$(stat -c %Y "$PUPPET_LAST_RUN" 2>/dev/null || stat -f %m "$PUPPET_LAST_RUN" 2>/dev/null)
-        local now
-        now=$(date +%s)
-        local age=$((now - last_run_time))
-        if [ "$age" -lt 300 ]; then
-            # Puppet ran recently, no need to trigger
-            mkdir -p /var/lib/alm
-            touch "$PUPPET_TRIGGERED_FLAG"
+    # Use glob to find file
+    for f in $state_file; do
+        if [[ -f "$f" ]]; then
             return 0
         fi
-    fi
-    
-    # Trigger Puppet run in background
-    echo -e "${YELLOW}Triggering Puppet run...${NC}"
-    mkdir -p /var/lib/alm
-    touch "$PUPPET_TRIGGERED_FLAG"
-    
-    # Run Puppet in background so it doesn't block the progress display
-    nohup /opt/puppetlabs/bin/puppet agent -t >/var/log/alm/puppet-trigger.log 2>&1 &
-    
-    return 0
+    done
+    return 1
 }
 
-# Progress bar function
+# Check if a specific error exists
+has_error() {
+    local error_type="$1"
+    [[ -f "${STATE_DIR}/error_${error_type}" ]]
+}
+
+# Get error message from error file
+get_error_message() {
+    local error_type="$1"
+    local error_file="${STATE_DIR}/error_${error_type}"
+    if [[ -f "$error_file" ]]; then
+        cat "$error_file" 2>/dev/null || echo "Unknown error"
+    fi
+}
+
+# ============================================================================
+# Live Detection Functions (fallback when state files not yet created)
+# ============================================================================
+
+# These run live checks for steps that can be detected without docker access
+detect_step_live() {
+    local step_num="$1"
+
+    case "$step_num" in
+        "01") # Docker installed
+            command -v docker &>/dev/null
+            ;;
+        "02") # Docker running
+            systemctl is-active --quiet docker 2>/dev/null
+            ;;
+        "03") # Puppet installed
+            [[ -x "/opt/puppetlabs/bin/puppet" ]]
+            ;;
+        "04") # Puppet configured
+            [[ -f "/etc/puppetlabs/puppet/puppet.conf" ]] && \
+            grep -q "server.*puppet.strealer.io" /etc/puppetlabs/puppet/puppet.conf 2>/dev/null
+            ;;
+        "05") # Puppet cert valid - check for signed cert (not just CA)
+            local cert_dir="/etc/puppetlabs/puppet/ssl/certs"
+            local hostname
+            hostname=$(hostname 2>/dev/null || echo "unknown")
+            [[ -f "${cert_dir}/${hostname}.pem" ]]
+            ;;
+        "06") # Puppet run success - check last run report
+            if [[ -f "$PUPPET_LAST_RUN" ]]; then
+                # Check if last run was successful (no failures)
+                ! grep -q "failed.*[1-9]" "$PUPPET_LAST_RUN" 2>/dev/null
+            else
+                return 1
+            fi
+            ;;
+        "07") # GCP token available
+            [[ -f "/opt/alm/config/gcp-registry-token" ]] && \
+            [[ -s "/opt/alm/config/gcp-registry-token" ]]
+            ;;
+        "08") # Images pulled - check state file only (can't detect without docker)
+            is_step_complete "08"
+            ;;
+        "09") # Init complete - check state file or init container exit
+            is_step_complete "09"
+            ;;
+        "10") # Service responding - curl localhost:80
+            curl -sf -o /dev/null --connect-timeout 2 http://localhost:80 2>/dev/null
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Check step completion (state file first, then live detection)
+check_step() {
+    local step_num="$1"
+
+    # First check state file (authoritative)
+    if is_step_complete "$step_num"; then
+        return 0
+    fi
+
+    # Fall back to live detection
+    detect_step_live "$step_num"
+}
+
+# ============================================================================
+# Error Detection
+# ============================================================================
+
+detect_errors() {
+    local errors=()
+
+    # Check for certificate mismatch (from Puppet logs)
+    if [[ -f "/var/log/syslog" ]]; then
+        if grep -q "certificate.*does not match.*private key" /var/log/syslog 2>/dev/null; then
+            errors+=("cert_mismatch")
+        fi
+    fi
+
+    # Check for authentication failures
+    if has_error "auth_failed"; then
+        errors+=("auth_failed")
+    fi
+
+    # Check for image pull failures
+    if has_error "image_pull_failed"; then
+        errors+=("image_pull_failed")
+    fi
+
+    # Check for network issues
+    if ! ping -c1 -W2 8.8.8.8 &>/dev/null; then
+        errors+=("no_network")
+    fi
+
+    # Return errors
+    printf '%s\n' "${errors[@]}"
+}
+
+# ============================================================================
+# Progress Calculation
+# ============================================================================
+
+get_progress() {
+    local completed=0
+    local total=${#STEPS[@]}
+
+    for step_def in "${STEPS[@]}"; do
+        IFS='|' read -r num suffix desc active <<< "$step_def"
+        if check_step "$num"; then
+            ((completed++))
+        else
+            break  # Stop at first incomplete step
+        fi
+    done
+
+    echo "$((completed * 100 / total))"
+}
+
+get_completed_steps() {
+    local completed=0
+
+    for step_def in "${STEPS[@]}"; do
+        IFS='|' read -r num suffix desc active <<< "$step_def"
+        if check_step "$num"; then
+            ((completed++))
+        else
+            break
+        fi
+    done
+
+    echo "$completed"
+}
+
+get_current_step_info() {
+    for step_def in "${STEPS[@]}"; do
+        IFS='|' read -r num suffix desc active <<< "$step_def"
+        if ! check_step "$num"; then
+            echo "${num}|${active}"
+            return
+        fi
+    done
+    echo "done|Setup complete!"
+}
+
+# ============================================================================
+# Display Functions
+# ============================================================================
+
 progress_bar() {
     local percent=$1
-    local width=${2:-50}
+    local width=${2:-60}
     local filled=$((percent * width / 100))
     local empty=$((width - filled))
     local bar=""
-    local i
 
-    for ((i=0; i<filled; i++)); do
-        bar="${bar}█"
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++)); do bar+="░"; done
+
+    echo -e "[${GREEN}${bar}${NC}] ${percent}%"
+}
+
+show_step_status() {
+    local completed
+    completed=$(get_completed_steps)
+
+    echo -e "${CYAN}Step Details:${NC}"
+
+    local i=0
+    for step_def in "${STEPS[@]}"; do
+        IFS='|' read -r num suffix desc active <<< "$step_def"
+        ((i++))
+
+        if check_step "$num"; then
+            echo -e "  ${GREEN}✓${NC} ${desc}"
+        elif [[ $i -eq $((completed + 1)) ]]; then
+            # Current step - show as in progress
+            echo -e "  ${YELLOW}◐${NC} ${active}"
+        else
+            echo -e "  ${GRAY}○${NC} ${desc}"
+        fi
     done
-    for ((i=0; i<empty; i++)); do
-        bar="${bar}░"
+}
+
+show_error_info() {
+    local errors
+    mapfile -t errors < <(detect_errors)
+
+    if [[ ${#errors[@]} -eq 0 ]]; then
+        return
+    fi
+
+    echo ""
+    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${RED}⚠  Issue Detected${NC}"
+    echo ""
+
+    for error in "${errors[@]}"; do
+        case "$error" in
+            "cert_mismatch")
+                echo -e "${YELLOW}Certificate mismatch detected${NC}"
+                echo "  The Puppet certificate doesn't match the private key."
+                echo "  This happens when a device is re-imaged."
+                echo ""
+                echo -e "  ${CYAN}Auto-fix:${NC} Watchdog will clean the old cert within 2 minutes."
+                echo -e "  ${CYAN}Manual fix:${NC} Wait or run: sudo rm -rf /etc/puppetlabs/puppet/ssl"
+                ;;
+            "auth_failed")
+                echo -e "${YELLOW}Registry authentication failed${NC}"
+                echo "  Unable to authenticate with GCP Artifact Registry."
+                echo ""
+                echo -e "  ${CYAN}This usually resolves automatically on next Puppet run.${NC}"
+                ;;
+            "image_pull_failed")
+                echo -e "${YELLOW}Docker image pull failed${NC}"
+                local msg
+                msg=$(get_error_message "image_pull_failed")
+                echo "  $msg"
+                ;;
+            "no_network")
+                echo -e "${YELLOW}No network connection${NC}"
+                echo "  Cannot reach the internet."
+                echo ""
+                echo "  • Check Ethernet cable connection"
+                echo "  • Or configure WiFi: sudo nmtui"
+                ;;
+        esac
+        echo ""
     done
-
-    echo -e "[\033[32m${bar}\033[0m] ${percent}%"
 }
 
-# Check if setup is complete
-is_setup_complete() {
-    # Setup is complete if:
-    # 1. Flag file exists, OR
-    # 2. Port 80 is responding (primary check - works for all users), OR
-    # 3. Docker containers running (only for almadmin/root)
-
-    if [ -f "$SETUP_COMPLETE_FLAG" ]; then
-        return 0
-    fi
-
-    # Primary completion check: nginx serving on port 80
-    # This is checked continuously in the monitoring loop and works for all users
-    # Try curl first, fall back to wget (more commonly pre-installed)
-    if command -v curl &>/dev/null; then
-        if curl -f -s -o /dev/null localhost:80 2>/dev/null; then
-            return 0
-        fi
-    elif command -v wget &>/dev/null; then
-        if wget -q -O /dev/null --timeout=2 localhost:80 2>/dev/null; then
-            return 0
-        fi
-    fi
-
-    # Secondary check: Docker containers running (only for users with Docker access)
-    # Only run Docker commands for almadmin and root
-    local current_user
-    current_user=$(whoami)
-    if [[ "$current_user" == "almadmin" || "$current_user" == "root" ]]; then
-        if command -v docker &>/dev/null; then
-            local running_containers
-            running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null || echo "")
-            if echo "$running_containers" | grep -q '^alm$'; then
-                if echo "$running_containers" | grep -q 'alm_telemetry'; then
-                    return 0
-                fi
-            fi
-        fi
-    fi
-
-    return 1
-}
-
-# Get overall setup progress percentage
-get_setup_progress() {
-    local total_steps=6
-    local completed=0
-
-    # Step 1: Docker installed
-    if command -v docker &>/dev/null; then
-        ((completed++))
-    fi
-
-    # Step 2: Docker service running
-    if systemctl is-active --quiet docker 2>/dev/null; then
-        ((completed++))
-    fi
-
-    # Step 3: Puppet configured
-    if [ -f "/etc/puppetlabs/puppet/puppet.conf" ]; then
-        ((completed++))
-    fi
-
-    # Step 4: ALM directories created
-    if [ -d "/opt/alm" ]; then
-        ((completed++))
-    fi
-
-    # Step 5: Docker images pulled (check all required images exist)
-    # Only check for almadmin and root (requires Docker group access)
-    local current_user
-    current_user=$(whoami)
-    if [[ "$current_user" == "almadmin" || "$current_user" == "root" ]]; then
-        if command -v docker &>/dev/null; then
-            # Check if all three required images exist locally
-            if docker image inspect \
-                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:latest \
-                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:latest \
-                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-telemetry/alm-telemetry:latest \
-                >/dev/null 2>&1; then
-                ((completed++))
-            fi
-        fi
-    else
-        # For almuser: skip this step (no Docker access)
-        # Assume progress if Docker service is running
-        if systemctl is-active --quiet docker 2>/dev/null; then
-            ((completed++))
-        fi
-    fi
-
-    # Step 6: Containers running (both main app and telemetry)
-    # Only check for almadmin and root (requires Docker group access)
-    if [[ "$current_user" == "almadmin" || "$current_user" == "root" ]]; then
-        if command -v docker &>/dev/null; then
-            local running_containers
-            running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null || echo "")
-            if echo "$running_containers" | grep -q '^alm$'; then
-                if echo "$running_containers" | grep -q 'alm_telemetry'; then
-                    ((completed++))
-                fi
-            fi
-        fi
-    else
-        # For almuser: use curl/wget localhost:80 as indicator
-        if command -v curl &>/dev/null; then
-            if curl -f -s -o /dev/null localhost:80 2>/dev/null; then
-                ((completed++))
-            fi
-        elif command -v wget &>/dev/null; then
-            if wget -q -O /dev/null --timeout=2 localhost:80 2>/dev/null; then
-                ((completed++))
-            fi
-        fi
-    fi
-
-    echo $((completed * 100 / total_steps))
-}
-
-# Get current setup step description
-get_current_step() {
-    if ! command -v docker &>/dev/null; then
-        echo "Installing Docker..."
-        return
-    fi
-
-    if ! systemctl is-active --quiet docker 2>/dev/null; then
-        echo "Starting Docker service..."
-        return
-    fi
-
-    if [ ! -f "/etc/puppetlabs/puppet/puppet.conf" ]; then
-        echo "Configuring Puppet agent..."
-        return
-    fi
-
-    if [ ! -d "/opt/alm" ]; then
-        echo "Creating ALM directories..."
-        return
-    fi
-
-    # Image and container checks - only for almadmin and root
-    local current_user
-    current_user=$(whoami)
-    if [[ "$current_user" == "almadmin" || "$current_user" == "root" ]]; then
-        if command -v docker &>/dev/null; then
-            # Check if all required images are pulled
-            if ! docker image inspect \
-                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-init/alm-init:latest \
-                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-app/alm-app:latest \
-                europe-west1-docker.pkg.dev/effective-pipe-424209-r1/alm-telemetry/alm-telemetry:latest \
-                >/dev/null 2>&1; then
-                echo "Pulling Docker images (this may take 3-5 minutes)..."
-                return
-            fi
-        fi
-
-        if command -v docker &>/dev/null; then
-            local running_containers
-            running_containers=$(docker ps --format '{{.Names}}' 2>/dev/null || echo "")
-            # Check if both main and telemetry containers are running
-            if echo "$running_containers" | grep -q '^alm$'; then
-                if echo "$running_containers" | grep -q 'alm_telemetry'; then
-                    # Both running = setup complete
-                    echo "Setup complete!"
-                    return
-                fi
-            fi
-            # If we get here, containers are not fully running yet
-            echo "Starting ALM containers..."
-            return
-        fi
-    else
-        # For almuser: show simplified message
-        echo "Finalizing setup (waiting for service to start)..."
-        return
-    fi
-
-    echo "Setup complete!"
-}
-
-# Docker pull progress tracking removed - Puppet handles pulls
-# Progress detection now uses simple image existence checks (more reliable)
-
-# Display setup progress
-display_progress() {
-    clear
-
+display_header() {
     cat << "EOF"
 ╔═════════════════════════════════════════════════════════════════════════╗
 ║                                                                         ║
@@ -332,27 +362,46 @@ display_progress() {
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝
 EOF
+}
+
+display_progress() {
+    clear
+    display_header
 
     echo ""
-    local progress=$(get_setup_progress)
-    local current_step=$(get_current_step)
-    local bar=$(progress_bar "$progress" 60)
+    local progress
+    progress=$(get_progress)
+    local current_info
+    current_info=$(get_current_step_info)
+    local current_step="${current_info%%|*}"
+    local current_desc="${current_info#*|}"
 
+    # Progress bar
     echo -e "${CYAN}Setup Progress:${NC}"
-    echo "$bar"
+    progress_bar "$progress"
     echo ""
-    echo -e "${YELLOW}Current Step:${NC} $current_step"
-    
-    # Show Puppet status if running
-    if is_puppet_running; then
-        echo -e "${CYAN}  └─ Puppet agent is currently running...${NC}"
+
+    # Current step
+    echo -e "${YELLOW}Current Step:${NC} ${current_desc}"
+
+    # Show if Puppet is running
+    if pgrep -f "puppet agent" &>/dev/null; then
+        echo -e "${CYAN}  └─ Puppet agent is running...${NC}"
     fi
+
     echo ""
+
+    # Step details
+    show_step_status
+
+    # Error info if any
+    show_error_info
+
     echo ""
     echo -e "${GRAY}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
-    if [ "$progress" -eq 100 ]; then
+    if [[ "$progress" -eq 100 ]]; then
         echo -e "${GREEN}✅ Setup Complete!${NC}"
         echo ""
         echo "Your device is now ready. Available commands:"
@@ -361,67 +410,114 @@ EOF
         echo -e "  ${BLUE}alm help${NC}     - Show all available commands"
         echo ""
 
-        # Setup is complete - rely on container detection, no flag file needed
-        # Container detection in is_setup_complete() handles future login checks
+        # Create completion state file if we have permission
+        if [[ -w "$STATE_DIR" ]] || [[ $(whoami) == "root" ]]; then
+            ensure_state_dir
+            touch "${STATE_DIR}/10_service_responding" 2>/dev/null || true
+        fi
     else
         echo -e "${YELLOW}⏳ Setup in progress...${NC}"
         echo ""
-        local time_remaining=$(( (100 - progress) / 20 + 1 ))
-        if [ "$time_remaining" -eq 1 ]; then
-            echo "Estimated time remaining: 1 minute"
+
+        # Estimate time based on current step
+        local completed
+        completed=$(get_completed_steps)
+        local remaining=$((10 - completed))
+        local est_minutes=$((remaining / 2 + 1))
+
+        if [[ "$est_minutes" -eq 1 ]]; then
+            echo "Estimated time remaining: ~1 minute"
         else
-            echo "Estimated time remaining: $time_remaining minutes"
+            echo "Estimated time remaining: ~${est_minutes} minutes"
         fi
+
         echo ""
         echo "You can:"
         echo "  • Wait here and watch progress (updates every 3 seconds)"
-        echo -e "  • Log out and check back later (${BLUE}ssh almuser@device-ip${NC})"
-        echo -e "  • Monitor detailed logs: ${BLUE}alm logs init${NC}"
+        echo -e "  • Log out and check back later (${BLUE}ssh almuser@<device-ip>${NC})"
+        echo -e "  • Monitor detailed logs: ${BLUE}journalctl -u puppet -f${NC}"
         echo ""
         echo -e "${GRAY}Press Ctrl+C to exit this monitoring screen${NC}"
     fi
 }
 
-# Main execution
+# ============================================================================
+# Puppet Trigger (root only)
+# ============================================================================
+
+trigger_puppet_if_needed() {
+    # Only root can trigger
+    [[ $(whoami) != "root" ]] && return 0
+
+    # Skip if already triggered this boot
+    [[ -f "$PUPPET_TRIGGERED_FLAG" ]] && return 0
+
+    # Skip if setup complete
+    check_step "10" && return 0
+
+    # Check network
+    if ! ping -c1 -W2 8.8.8.8 &>/dev/null; then
+        return 1
+    fi
+
+    # Check if Puppet ran recently (5 min)
+    if [[ -f "$PUPPET_LAST_RUN" ]]; then
+        local last_run_time now age
+        last_run_time=$(stat -c %Y "$PUPPET_LAST_RUN" 2>/dev/null || stat -f %m "$PUPPET_LAST_RUN" 2>/dev/null || echo 0)
+        now=$(date +%s)
+        age=$((now - last_run_time))
+        if [[ "$age" -lt 300 ]]; then
+            ensure_state_dir
+            touch "$PUPPET_TRIGGERED_FLAG" 2>/dev/null || true
+            return 0
+        fi
+    fi
+
+    # Trigger Puppet in background
+    echo -e "${YELLOW}Triggering Puppet run...${NC}"
+    ensure_state_dir
+    touch "$PUPPET_TRIGGERED_FLAG" 2>/dev/null || true
+    mkdir -p /var/log/alm 2>/dev/null || true
+    nohup /opt/puppetlabs/bin/puppet agent -t >/var/log/alm/puppet-trigger.log 2>&1 &
+
+    return 0
+}
+
+# ============================================================================
+# Setup Complete Check
+# ============================================================================
+
+is_setup_complete() {
+    # Check state file
+    [[ -f "${STATE_DIR}/10_service_responding" ]] && return 0
+
+    # Live check: curl localhost:80
+    curl -sf -o /dev/null --connect-timeout 2 http://localhost:80 2>/dev/null
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
 main() {
-    # Continuous monitoring loop
-    # Checks setup completion (including curl localhost:80) every few seconds
-    # For almadmin/root: also monitors Docker image pulls and container status
-    # For almuser: relies on curl localhost:80 check (no Docker access needed)
-    
     local network_warned=false
-    local puppet_triggered=false
+
+    # Ensure state directory exists
+    ensure_state_dir
 
     while true; do
-        # Check if setup is complete
-        # This includes curl localhost:80 check (works for all users)
-        # and Docker container checks (only for almadmin/root)
+        # Check if complete
         if is_setup_complete; then
-            # Show final success screen
             clear
             display_progress
             exit 0
         fi
 
-        # Check network and trigger Puppet if needed (only for root)
+        # Try to trigger Puppet (root only)
         if ! trigger_puppet_if_needed; then
-            # No network - show warning
-            if [ "$network_warned" = false ]; then
+            if [[ "$network_warned" == "false" ]]; then
                 clear
-                cat <<EOF
-╔═════════════════════════════════════════════════════════════════════════╗
-║                                                                         ║
-║     ███████╗████████╗██████╗ ███████╗ █████╗ ██╗     ███████╗██████╗    ║
-║     ██╔════╝╚══██╔══╝██╔══██╗██╔════╝██╔══██╗██║     ██╔════╝██╔══██╗   ║
-║     ███████╗   ██║   ██████╔╝█████╗  ███████║██║     █████╗  ██████╔╝   ║
-║     ╚════██║   ██║   ██╔══██╗██╔══╝  ██╔══██║██║     ██╔══╝  ██╔══██╗   ║
-║     ███████║   ██║   ██║  ██║███████╗██║  ██║███████╗███████╗██║  ██║   ║
-║     ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝   ║
-║                                                                         ║
-║                         AUTONOMOUS LOCAL MANAGER                        ║
-║                                                                         ║
-╚═════════════════════════════════════════════════════════════════════════╝
-EOF
+                display_header
                 echo ""
                 echo -e "${RED}⚠️  No Network Connection${NC}"
                 echo ""
@@ -436,21 +532,19 @@ EOF
             sleep 5
             continue
         fi
-        
-        # Network is available - reset warning flag
+
         network_warned=false
 
-        # Show current progress
+        # Display progress
         clear
         display_progress
 
-        # Wait before checking again (3 seconds)
-        # Allow user to exit with Ctrl+C
+        # Wait 3 seconds
         sleep 3
     done
 }
 
-# Only run if called directly (not sourced)
-if [ "${BASH_SOURCE[0]}" == "${0}" ]; then
+# Run only if executed directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
