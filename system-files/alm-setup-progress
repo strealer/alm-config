@@ -144,8 +144,10 @@ detect_step_live() {
             ;;
         "06") # Puppet run success - check last run report
             if [[ -f "$PUPPET_LAST_RUN" ]]; then
-                # Check if last run was successful (no failures)
-                ! grep -q "failed.*[1-9]" "$PUPPET_LAST_RUN" 2>/dev/null
+                # Check status field - should be 'changed' or 'unchanged' (not 'failed')
+                local status
+                status=$(grep "^status:" "$PUPPET_LAST_RUN" 2>/dev/null | head -1 | awk '{print $2}')
+                [[ "$status" == "changed" || "$status" == "unchanged" ]]
             else
                 return 1
             fi
