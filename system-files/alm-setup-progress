@@ -49,6 +49,32 @@ SETUP_COMPLETE="${STATE_DIR}/10_service_responding"
 PUPPET_TRIGGERED_FLAG="/var/lib/alm/puppet_triggered_this_boot"
 PUPPET_LAST_RUN="/opt/puppetlabs/puppet/cache/state/last_run_report.yaml"
 
+# Device identification
+DEVICE_HOSTNAME=$(hostname 2>/dev/null || echo "unknown")
+DEVICE_SERIAL=""
+
+# Extract serial number from hostname or /proc/cpuinfo
+get_device_serial() {
+    local serial=""
+
+    # Try to extract from hostname (e.g., prod-rpi4-14b52e5c -> 14b52e5c)
+    if [[ "$DEVICE_HOSTNAME" =~ -([a-f0-9]{8})$ ]]; then
+        serial="${BASH_REMATCH[1]}"
+    elif [[ "$DEVICE_HOSTNAME" =~ -([a-f0-9]{8})-[0-9]+$ ]]; then
+        # Legacy format with timestamp
+        serial="${BASH_REMATCH[1]}"
+    fi
+
+    # Fallback: read from /proc/cpuinfo (Raspberry Pi)
+    if [[ -z "$serial" ]] && [[ -f /proc/cpuinfo ]]; then
+        serial=$(grep -i "^Serial" /proc/cpuinfo 2>/dev/null | awk '{print $3}' | tail -c 9 | tr -d '\n')
+    fi
+
+    echo "$serial"
+}
+
+DEVICE_SERIAL=$(get_device_serial)
+
 # Colors
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
@@ -198,6 +224,27 @@ detect_errors() {
         fi
     fi
 
+    # Check for serial not in whitelist (from journalctl puppet logs)
+    # The autosign script logs "REJECT" when serial is not in whitelist
+    if journalctl -u puppet --since "10 minutes ago" 2>/dev/null | grep -q "serial.*not in whitelist"; then
+        errors+=("serial_not_whitelisted")
+    fi
+
+    # Check for CSR waiting (certificate not being signed)
+    # This could indicate serial not in whitelist
+    if [[ -f "/etc/puppetlabs/puppet/ssl/certificate_requests/${DEVICE_HOSTNAME}.pem" ]] && \
+       [[ ! -f "/etc/puppetlabs/puppet/ssl/certs/${DEVICE_HOSTNAME}.pem" ]]; then
+        # CSR exists but cert doesn't - might be waiting or rejected
+        local csr_age
+        csr_age=$(stat -c %Y "/etc/puppetlabs/puppet/ssl/certificate_requests/${DEVICE_HOSTNAME}.pem" 2>/dev/null || echo 0)
+        local now
+        now=$(date +%s)
+        if [[ $((now - csr_age)) -gt 120 ]]; then
+            # CSR is older than 2 minutes - likely rejected
+            errors+=("csr_pending")
+        fi
+    fi
+
     # Check for authentication failures
     if has_error "auth_failed"; then
         errors+=("auth_failed")
@@ -320,10 +367,17 @@ show_error_info() {
             "cert_mismatch")
                 echo -e "${YELLOW}Certificate mismatch detected${NC}"
                 echo "  The Puppet certificate doesn't match the private key."
-                echo "  This happens when a device is re-imaged."
+                echo "  This usually means the device was re-imaged or reset."
                 echo ""
-                echo -e "  ${CYAN}Auto-fix:${NC} Watchdog will clean the old cert within 2 minutes."
-                echo -e "  ${CYAN}Manual fix:${NC} Wait or run: sudo rm -rf /etc/puppetlabs/puppet/ssl"
+                echo -e "  ${CYAN}Auto-fix:${NC} The server will clean the old cert automatically."
+                echo ""
+                echo -e "  ${YELLOW}If this persists, the device serial may not be whitelisted:${NC}"
+                if [[ -n "$DEVICE_SERIAL" ]]; then
+                    echo -e "    Serial: ${CYAN}${DEVICE_SERIAL}${NC}"
+                    echo "    Ask admin to add this serial to the Puppet server whitelist."
+                else
+                    echo "    Unable to detect serial. Check /proc/cpuinfo manually."
+                fi
                 ;;
             "auth_failed")
                 echo -e "${YELLOW}Registry authentication failed${NC}"
@@ -343,6 +397,32 @@ show_error_info() {
                 echo ""
                 echo "  • Check Ethernet cable connection"
                 echo "  • Or configure WiFi: sudo nmtui"
+                ;;
+            "serial_not_whitelisted")
+                echo -e "${RED}Device serial not in whitelist${NC}"
+                echo "  This device's serial number is not authorized."
+                echo ""
+                if [[ -n "$DEVICE_SERIAL" ]]; then
+                    echo -e "  ${YELLOW}Device Serial: ${CYAN}${DEVICE_SERIAL}${NC}"
+                    echo ""
+                    echo "  To authorize this device, add the serial to the Puppet server:"
+                    echo -e "    ${BLUE}ssh root@puppet.strealer.io${NC}"
+                    echo -e "    ${BLUE}echo '${DEVICE_SERIAL}  # $(hostname)' >> /etc/puppetlabs/puppet/known_serials.txt${NC}"
+                else
+                    echo "  Unable to detect serial number."
+                    echo "  Check: cat /proc/cpuinfo | grep Serial"
+                fi
+                ;;
+            "csr_pending")
+                echo -e "${YELLOW}Certificate signing request pending${NC}"
+                echo "  The certificate request has not been signed."
+                echo "  This may indicate the device serial is not whitelisted."
+                echo ""
+                if [[ -n "$DEVICE_SERIAL" ]]; then
+                    echo -e "  ${YELLOW}Device Serial: ${CYAN}${DEVICE_SERIAL}${NC}"
+                    echo ""
+                    echo "  Contact admin to verify this serial is in the whitelist."
+                fi
                 ;;
         esac
         echo ""
@@ -364,6 +444,16 @@ display_header() {
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝
 EOF
+    # Show device info below header
+    echo ""
+    echo -e "${GRAY}─────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "  ${BLUE}Hostname:${NC} ${DEVICE_HOSTNAME}"
+    if [[ -n "$DEVICE_SERIAL" ]]; then
+        echo -e "  ${BLUE}Serial:${NC}   ${CYAN}${DEVICE_SERIAL}${NC}"
+    else
+        echo -e "  ${BLUE}Serial:${NC}   ${YELLOW}(unable to detect)${NC}"
+    fi
+    echo -e "${GRAY}─────────────────────────────────────────────────────────────────────────${NC}"
 }
 
 display_progress() {
