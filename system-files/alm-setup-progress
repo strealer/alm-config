@@ -444,16 +444,9 @@ display_header() {
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝
 EOF
-    # Show device info below header
+    # Show device hostname below header
     echo ""
-    echo -e "${GRAY}─────────────────────────────────────────────────────────────────────────${NC}"
     echo -e "  ${BLUE}Hostname:${NC} ${DEVICE_HOSTNAME}"
-    if [[ -n "$DEVICE_SERIAL" ]]; then
-        echo -e "  ${BLUE}Serial:${NC}   ${CYAN}${DEVICE_SERIAL}${NC}"
-    else
-        echo -e "  ${BLUE}Serial:${NC}   ${YELLOW}(unable to detect)${NC}"
-    fi
-    echo -e "${GRAY}─────────────────────────────────────────────────────────────────────────${NC}"
 }
 
 display_progress() {
