@@ -21,6 +21,10 @@ else
 	DOCKER_COMPOSE_CMD="sudo docker compose"
 fi
 
+# Puppet command - always use full path since /opt/puppetlabs/bin may not be in PATH
+readonly PUPPET_BIN="/opt/puppetlabs/bin/puppet"
+readonly PUPPETSERVER_BIN="/opt/puppetlabs/bin/puppetserver"
+
 # Colors for output (use $'...' syntax for escape sequence interpretation)
 readonly RED=$'\033[0;31m'
 readonly GREEN=$'\033[0;32m'
@@ -171,10 +175,15 @@ EOF
 	local init_container="alm_init"
 	local main_container="alm"
 
+	# Get container names (avoid grep -Fxq which fails with set -e when no match)
+	local container_names
+	container_names=$($DOCKER_CMD ps -a --format "{{.Names}}" 2>/dev/null) || container_names=""
+
 	# Check init container (should exit after successful registration)
-	if $DOCKER_CMD ps -a --format "{{.Names}}" | grep -Fxq "$init_container"; then
-		init_status=$($DOCKER_CMD ps -a --filter "name=^${init_container}$" --format "{{.Status}}")
-		if echo "$init_status" | head -n1 | grep -q "Exited (0)"; then
+	if echo "$container_names" | grep -Fxq "$init_container" 2>/dev/null; then
+		local init_status
+		init_status=$($DOCKER_CMD ps -a --filter "name=^${init_container}$" --format "{{.Status}}" 2>/dev/null) || init_status=""
+		if echo "$init_status" | head -n1 | grep -q "Exited (0)" 2>/dev/null; then
 			log_success "Init container: Completed successfully"
 			echo "    Registration complete, device initialized"
 		else
@@ -186,7 +195,7 @@ EOF
 	fi
 
 	# Check main container (via HTTP on port 80)
-	if $DOCKER_CMD ps -a --format "{{.Names}}" | grep -Fxq "$main_container"; then
+	if echo "$container_names" | grep -Fxq "$main_container" 2>/dev/null; then
 		if is_container_healthy 80; then
 			log_success "Main container: Running"
 			echo "    Port 80: Application service"
@@ -204,7 +213,8 @@ EOF
 
 	echo ""
 	echo -e "${BLUE}Telemetry Worker:${NC}"
-	telemetry_status=$($DOCKER_CMD ps -a --filter "name=^alm_telemetry$" --format "{{.Status}}")
+	local telemetry_status
+	telemetry_status=$($DOCKER_CMD ps -a --filter "name=^alm_telemetry$" --format "{{.Status}}" 2>/dev/null) || telemetry_status=""
 	if [[ -n "$telemetry_status" ]]; then
 		if echo "$telemetry_status" | grep -qi "Up"; then
 			log_success "Telemetry container: Running"
@@ -600,7 +610,7 @@ EOF
 	# Request cert cleanup via SSH (if key-based auth available)
 	if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
 		root@puppet.strealer.io \
-		"/opt/puppetlabs/bin/puppetserver ca clean --certname $certname" 2>/dev/null; then
+		"${PUPPETSERVER_BIN} ca clean --certname $certname" 2>/dev/null; then
 		log_success "Old certificate cleaned on server"
 	else
 		log_warning "Could not clean cert remotely (will be handled by watchdog within 2 min)"
@@ -904,7 +914,7 @@ EOF
 	log_info "Requesting certificate cleanup on Puppet server..."
 	if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
 		root@puppet.strealer.io \
-		"/opt/puppetlabs/bin/puppetserver ca clean --certname $old_certname" 2>/dev/null; then
+		"${PUPPETSERVER_BIN} ca clean --certname $old_certname" 2>/dev/null; then
 		log_success "Old certificate cleaned on server"
 	else
 		log_warning "Could not clean cert remotely (will be handled by watchdog)"
