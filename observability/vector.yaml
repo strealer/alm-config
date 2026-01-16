@@ -21,7 +21,7 @@ sources:
   docker_containers:
     type: docker_logs
     docker_host: "unix:///var/run/docker.sock"
-    include_containers: ["alm_arm64", "alm_telemetry", "alm_init"]
+    include_containers: ["alm", "alm_telemetry", "alm_init"]
     exclude_containers: []
     partial_event_marker_field: "_partial"
     auto_partial_merge: true
@@ -180,7 +180,7 @@ transforms:
     inputs: ["sample_nginx_access", "nginx_error", "docker_containers", "system_logs", "kernel_logs", "ip_info", "service_health", "top_processes", "docker_images_info", "psi_pressure"]
     source: |
       # Get hostname from system (cached by Vector)
-      # Use full hostname for proper device identification (e.g., prod-rpi4-14b52e5c)
+      # Use full hostname for proper device identification (e.g., prod-rpi4-c7368910b6-14b52e5c)
       hostname, _ = get_hostname()
       .device_hostname = hostname || "unknown"
 
