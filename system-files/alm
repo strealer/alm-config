@@ -600,6 +600,20 @@ EOF
     echo "server = puppet.strealer.io" | sudo tee -a /etc/puppetlabs/puppet/puppet.conf > /dev/null
 
     echo ""
+    log_info "Requesting certificate cleanup on Puppet server..."
+    local hostname
+    hostname=$(hostname)
+    # Request cert cleanup via SSH (if key-based auth available) or HTTP API
+    # This ensures immediate cleanup without waiting for watchdog
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+       root@puppet.strealer.io \
+       "/opt/puppetlabs/bin/puppetserver ca clean --certname $hostname" 2>/dev/null; then
+        log_success "Old certificate cleaned on server"
+    else
+        log_warning "Could not clean cert remotely (will be handled by watchdog within 2 min)"
+    fi
+
+    echo ""
     log_info "Clearing ALM runtime state..."
     sudo rm -rf /var/lib/alm
     sudo rm -f /var/log/alm/*.log 2>/dev/null || true
