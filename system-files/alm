@@ -680,6 +680,137 @@ PUPPET_CONF
 }
 
 #
+# Command: alm puppet-config
+# Update puppet.conf from repository
+#
+cmd_puppet_config() {
+    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+        cat <<EOF
+Usage: alm puppet-config
+
+Update puppet.conf from the alm-config repository.
+
+This command:
+  1. Determines the correct certname from SSL cert or hostname
+  2. Downloads the puppet.conf template from GitHub
+  3. Substitutes the certname placeholder
+  4. Optionally restarts Puppet agent
+
+Use this to fix puppet.conf without doing a full factory-reset.
+
+Requires: sudo privileges
+
+Examples:
+  alm puppet-config
+EOF
+        return 0
+    fi
+
+    log_info "Updating puppet.conf from repository..."
+
+    # PRIORITY 1: Extract certname from SSL certificate filename (most authoritative)
+    local certname=""
+    local ssl_cert_dir="/etc/puppetlabs/puppet/ssl/certs"
+    if [[ -d "$ssl_cert_dir" ]]; then
+        local node_cert=""
+        for cert_file in "$ssl_cert_dir"/*.pem; do
+            if [[ -f "$cert_file" ]] && [[ "$(basename "$cert_file")" != "ca.pem" ]]; then
+                node_cert="$cert_file"
+                break
+            fi
+        done
+        if [[ -n "$node_cert" ]]; then
+            certname=$(basename "$node_cert" .pem)
+            log_info "Found certname from SSL cert: $certname"
+        fi
+    fi
+
+    # PRIORITY 2: Use system hostname
+    if [[ -z "$certname" ]]; then
+        certname=$(hostname)
+        log_info "Using system hostname: $certname"
+    fi
+
+    # Validate certname format: <env>-<type>-<secret>-<serial>
+    if ! echo "$certname" | grep -qE "^(prod|stg|dev)-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+$"; then
+        log_error "Certname '$certname' doesn't match required format: <env>-<type>-<secret>-<serial>"
+        log_error "Example: prod-rpi4-c7368910b6-14b52e5c"
+        log_error "Run configure_puppet_agent.sh to fix hostname, or check /etc/strealer/autosign_secret"
+        return 1
+    fi
+
+    # Download puppet.conf template and substitute certname
+    local config_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/puppet.conf"
+    sudo mkdir -p /etc/puppetlabs/puppet
+    if curl -fsSL "$config_url" | sed "s/%%HOSTNAME%%/$certname/g" | sudo tee /etc/puppetlabs/puppet/puppet.conf > /dev/null; then
+        log_success "puppet.conf updated with certname: $certname"
+    else
+        log_error "Failed to download puppet.conf template"
+        return 1
+    fi
+
+    echo ""
+    read -r -p "Restart Puppet agent now? [y/N]: " response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        log_info "Restarting Puppet agent..."
+        sudo systemctl restart puppet
+        log_success "Puppet agent restarted"
+    else
+        log_info "Puppet agent not restarted. Run 'sudo systemctl restart puppet' to apply changes."
+    fi
+}
+
+#
+# Command: alm update
+# Update the alm CLI tool from repository
+#
+cmd_update() {
+    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+        cat <<EOF
+Usage: alm update
+
+Update the alm CLI tool from the alm-config repository.
+
+This downloads the latest version of the alm script from GitHub
+and replaces the current installation.
+
+Requires: sudo privileges
+
+Examples:
+  alm update
+EOF
+        return 0
+    fi
+
+    log_info "Updating alm CLI from repository..."
+
+    local alm_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/alm"
+    local alm_path="/opt/alm/bin/alm"
+    local tmp_path="/tmp/alm.new"
+
+    # Download to temp location first
+    if ! curl -fsSL -o "$tmp_path" "$alm_url"; then
+        log_error "Failed to download alm CLI"
+        rm -f "$tmp_path"
+        return 1
+    fi
+
+    # Verify it's a valid bash script
+    if ! head -1 "$tmp_path" | grep -q "^#!/bin/bash"; then
+        log_error "Downloaded file doesn't appear to be a valid bash script"
+        rm -f "$tmp_path"
+        return 1
+    fi
+
+    # Install the new version
+    sudo mv "$tmp_path" "$alm_path"
+    sudo chmod +x "$alm_path"
+
+    log_success "alm CLI updated successfully!"
+    log_info "Run 'alm help' to see available commands"
+}
+
+#
 # Command: alm help
 # Show usage information
 #
@@ -699,6 +830,8 @@ ${BLUE}Commands:${NC}
   ${GREEN}restart${NC}        Restart ALM service
   ${GREEN}reset${NC}          Reset containers and volumes (keeps Docker)
   ${GREEN}factory-reset${NC}  Complete reset to fresh-boot state (removes Docker)
+  ${GREEN}puppet-config${NC}  Update puppet.conf from repository
+  ${GREEN}update${NC}         Update the alm CLI tool from repository
   ${GREEN}help${NC}           Show this help message
 
 ${BLUE}Examples:${NC}
@@ -716,6 +849,8 @@ ${BLUE}Get Help for Specific Commands:${NC}
   alm restart --help
   alm reset --help
   alm factory-reset --help
+  alm puppet-config --help
+  alm update --help
 
 ${BLUE}Automated Registration:${NC}
   • Device registration is FULLY AUTOMATED
@@ -864,6 +999,12 @@ main() {
             ;;
         factory-reset)
             cmd_factory_reset "$@"
+            ;;
+        puppet-config)
+            cmd_puppet_config "$@"
+            ;;
+        update)
+            cmd_update "$@"
             ;;
         help|--help|-h)
             cmd_help
