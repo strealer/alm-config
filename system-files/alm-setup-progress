@@ -224,10 +224,10 @@ detect_errors() {
         fi
     fi
 
-    # Check for serial not in whitelist (from journalctl puppet logs)
-    # The autosign script logs "REJECT" when serial is not in whitelist
-    if journalctl -u puppet --since "10 minutes ago" 2>/dev/null | grep -q "serial.*not in whitelist"; then
-        errors+=("serial_not_whitelisted")
+    # Check for secret prefix not found (from journalctl puppet logs)
+    # The autosign script logs "REJECT" when secret prefix is missing
+    if journalctl -u puppet --since "10 minutes ago" 2>/dev/null | grep -q "secret prefix not found"; then
+        errors+=("secret_not_found")
     fi
 
     # Check for CSR waiting (certificate not being signed)
@@ -373,13 +373,10 @@ show_error_info() {
                 echo ""
                 echo -e "  ${CYAN}Auto-fix:${NC} The server will clean the old cert automatically."
                 echo ""
-                echo -e "  ${YELLOW}If this persists, the device serial may not be whitelisted:${NC}"
-                if [[ -n "$DEVICE_SERIAL" ]]; then
-                    echo -e "    Serial: ${CYAN}${DEVICE_SERIAL}${NC}"
-                    echo "    Ask admin to add this serial to the Puppet server whitelist."
-                else
-                    echo "    Unable to detect serial. Check /proc/cpuinfo manually."
-                fi
+                echo -e "  ${YELLOW}If this persists, check the hostname format:${NC}"
+                echo "    Format: <env>-<type>-<secret>-<serial>"
+                echo "    Example: prod-rpi4-<secret>-${DEVICE_SERIAL:-<serial>}"
+                echo "    Contact admin for the correct autosign secret."
                 ;;
             "auth_failed")
                 echo -e "${YELLOW}Registry authentication failed${NC}"
@@ -400,31 +397,27 @@ show_error_info() {
                 echo "  • Check Ethernet cable connection"
                 echo "  • Or configure WiFi: sudo nmtui"
                 ;;
-            "serial_not_whitelisted")
-                echo -e "${RED}Device serial not in whitelist${NC}"
-                echo "  This device's serial number is not authorized."
+            "secret_not_found")
+                echo -e "${RED}Autosign secret not found in hostname${NC}"
+                echo "  The device hostname doesn't contain the correct secret prefix."
                 echo ""
-                if [[ -n "$DEVICE_SERIAL" ]]; then
-                    echo -e "  ${YELLOW}Device Serial: ${CYAN}${DEVICE_SERIAL}${NC}"
-                    echo ""
-                    echo "  To authorize this device, add the serial to the Puppet server:"
-                    echo -e "    ${BLUE}ssh root@puppet.strealer.io${NC}"
-                    echo -e "    ${BLUE}echo '${DEVICE_SERIAL}  # $(hostname)' >> /etc/puppetlabs/puppet/known_serials.txt${NC}"
-                else
-                    echo "  Unable to detect serial number."
-                    echo "  Check: cat /proc/cpuinfo | grep Serial"
-                fi
+                echo -e "  ${YELLOW}Current hostname: ${CYAN}${DEVICE_HOSTNAME}${NC}"
+                echo ""
+                echo "  Required format: <env>-<type>-<secret>-<serial>"
+                echo "  Example: prod-rpi4-<secret>-${DEVICE_SERIAL:-12345678}"
+                echo ""
+                echo "  Contact admin for the correct autosign secret,"
+                echo "  then update the hostname and try again."
                 ;;
             "csr_pending")
                 echo -e "${YELLOW}Certificate signing request pending${NC}"
                 echo "  The certificate request has not been signed."
-                echo "  This may indicate the device serial is not whitelisted."
+                echo "  This may indicate the hostname doesn't have the correct secret."
                 echo ""
-                if [[ -n "$DEVICE_SERIAL" ]]; then
-                    echo -e "  ${YELLOW}Device Serial: ${CYAN}${DEVICE_SERIAL}${NC}"
-                    echo ""
-                    echo "  Contact admin to verify this serial is in the whitelist."
-                fi
+                echo -e "  ${YELLOW}Current hostname: ${CYAN}${DEVICE_HOSTNAME}${NC}"
+                echo ""
+                echo "  Required format: <env>-<type>-<secret>-<serial>"
+                echo "  Contact admin to verify the hostname includes the correct secret."
                 ;;
         esac
         echo ""
