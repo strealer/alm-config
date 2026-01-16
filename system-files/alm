@@ -594,60 +594,10 @@ EOF
     sudo rm -f /var/lib/puppet-config-done
 
     echo ""
-    log_info "Regenerating Puppet configuration with correct certname..."
-
-    # Determine certname using system hostname (should have secret from configure_puppet_agent.sh)
+    log_info "Requesting certificate cleanup on Puppet server..."
     local certname
     certname=$(hostname)
-
-    # Validate certname format: <env>-<type>-<secret>-<serial>
-    if ! echo "$certname" | grep -qE "^(prod|stg|dev)-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+$"; then
-        log_error "Hostname '$certname' doesn't match required format: <env>-<type>-<secret>-<serial>"
-        log_error "Example: prod-rpi4-c7368910b6-14b52e5c"
-        log_error "Run configure_puppet_agent.sh to fix hostname, or check /etc/strealer/autosign_secret"
-        return 1
-    fi
-
-    log_info "Using certname: $certname"
-
-    # Download puppet.conf template and substitute certname
-    local config_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/puppet.conf"
-    sudo mkdir -p /etc/puppetlabs/puppet
-    if curl -fsSL "$config_url" | sed "s/%%HOSTNAME%%/$certname/g" | sudo tee /etc/puppetlabs/puppet/puppet.conf > /dev/null; then
-        log_success "puppet.conf regenerated with certname: $certname"
-    else
-        log_error "Failed to download puppet.conf template"
-        # Fallback to config matching the template format
-        log_warning "Using fallback configuration..."
-        cat <<PUPPET_CONF | sudo tee /etc/puppetlabs/puppet/puppet.conf > /dev/null
-# Puppet Agent Configuration
-# This file is managed by alm factory-reset (fallback mode)
-#
-# SOURCE: alm-config/system-files/puppet.conf
-# DEPLOYED BY: alm factory-reset fallback
-
-[main]
-server = puppet.strealer.io
-
-[agent]
-certname = $certname
-waitforcert = 60
-# Runs the agent service every 30 minutes
-# Optimized for:
-# - Allowing Docker image pulls to complete without overlapping runs
-# - Reducing Puppet server load (600 devices = 20 req/min vs 120 req/min @ 5min)
-# - Better thermal management on Raspberry Pi devices
-# - Reduces unnecessary network traffic and CPU cycles
-# - Deployments still complete within acceptable timeframe (worst case: 30-35 min)
-runinterval = 1800
-environment = production
-PUPPET_CONF
-    fi
-
-    echo ""
-    log_info "Requesting certificate cleanup on Puppet server..."
-    # Request cert cleanup via SSH (if key-based auth available) or HTTP API
-    # This ensures immediate cleanup without waiting for watchdog
+    # Request cert cleanup via SSH (if key-based auth available)
     if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
        root@puppet.strealer.io \
        "/opt/puppetlabs/bin/puppetserver ca clean --certname $certname" 2>/dev/null; then
@@ -662,14 +612,20 @@ PUPPET_CONF
     sudo rm -f /var/log/alm/*.log 2>/dev/null || true
 
     echo ""
-    log_info "Starting Puppet agent for fresh configuration..."
-    sudo systemctl start puppet
+    log_info "Running Puppet setup script from repository..."
+    local setup_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh"
+    if curl -fsSL "$setup_url" | sudo bash; then
+        log_success "Puppet setup completed"
+    else
+        log_error "Puppet setup script failed"
+        return 1
+    fi
 
     echo ""
     log_success "Factory reset complete!"
     echo ""
     echo -e "${CYAN}What's happening now:${NC}"
-    echo "  • Puppet is obtaining a new certificate"
+    echo "  • Puppet agent is running and will configure the device"
     echo "  • Docker images will be pulled (2-4 minutes)"
     echo "  • Containers will be started automatically"
     echo ""
