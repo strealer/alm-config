@@ -490,10 +490,10 @@ trigger_puppet_if_needed() {
 # ============================================================================
 
 is_setup_complete() {
-    # Check state file
-    [[ -f "${STATE_DIR}/10_service_responding" ]] && return 0
-
-    # Live check: curl localhost:80
+    # Require BOTH state file AND live service check
+    # State file confirms Puppet completed successfully
+    # Live check confirms service is actually responding
+    [[ -f "${STATE_DIR}/10_service_responding" ]] || return 1
     curl -sf -o /dev/null --connect-timeout 2 http://localhost:80 2>/dev/null
 }
 
@@ -541,8 +541,8 @@ main() {
         clear
         display_progress
 
-        # Wait 3 seconds
-        sleep 3
+        # Wait 5 seconds before refreshing
+        sleep 5
     done
 }
 
