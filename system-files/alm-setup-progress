@@ -260,8 +260,10 @@ detect_errors() {
         errors+=("no_network")
     fi
 
-    # Return errors
-    printf '%s\n' "${errors[@]}"
+    # Return errors (only if array is not empty)
+    if [[ ${#errors[@]} -gt 0 ]]; then
+        printf '%s\n' "${errors[@]}"
+    fi
 }
 
 # ============================================================================
