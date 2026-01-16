@@ -228,7 +228,7 @@ get_progress() {
     for step_def in "${STEPS[@]}"; do
         IFS='|' read -r num suffix desc active <<< "$step_def"
         if check_step "$num"; then
-            ((completed++))
+            completed=$((completed + 1))
         else
             break  # Stop at first incomplete step
         fi
@@ -243,7 +243,7 @@ get_completed_steps() {
     for step_def in "${STEPS[@]}"; do
         IFS='|' read -r num suffix desc active <<< "$step_def"
         if check_step "$num"; then
-            ((completed++))
+            completed=$((completed + 1))
         else
             break
         fi
@@ -289,7 +289,7 @@ show_step_status() {
     local i=0
     for step_def in "${STEPS[@]}"; do
         IFS='|' read -r num suffix desc active <<< "$step_def"
-        ((i++))
+        i=$((i + 1))
 
         if check_step "$num"; then
             echo -e "  ${GREEN}✓${NC} ${desc}"

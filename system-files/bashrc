@@ -116,7 +116,8 @@ if [[ -z "$ALM_SETUP_CHECK_DONE" ]] && [ -x /usr/local/bin/alm-setup-progress ];
   export ALM_SETUP_CHECK_DONE=1
 
   # Check if setup is in progress (no flag file exists and containers not running)
-  SETUP_COMPLETE_FLAG="/var/lib/alm/setup_complete"
+  # Uses same flag as alm-setup-progress script
+  SETUP_COMPLETE_FLAG="/var/lib/alm/state/10_service_responding"
 
   if [ ! -f "$SETUP_COMPLETE_FLAG" ]; then
     # Check if containers are running (if not, setup still in progress)
