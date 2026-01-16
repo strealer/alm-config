@@ -86,10 +86,43 @@ if [[ $total_disk_size_gb -le 20 ]]; then
 	exit 1
 fi
 
-# Early cleanup for puppet certificate/service issues if flagged run
-if [[ -f "$FLAG_FILE" ]]; then
-	if systemctl status puppet 2>&1 | grep -qE 'certificate.*does not match|key values mismatch|SSL_CTX_use_PrivateKey|Could not parse PKey: unsupported' || ! systemctl is-active --quiet puppet; then
-		echo "Detected Puppet certificate or service issues. Cleaning up SSL and removing flag file..."
+# Early cleanup for puppet certificate/service issues
+# This check runs ALWAYS (not just when FLAG_FILE exists) to handle:
+# - Factory reset scenarios where FLAG_FILE is deleted but SSL certs remain
+# - Environment switches that change hostname but leave old certs
+# - Certificate corruption or mismatch issues
+if [[ -d /etc/puppetlabs/puppet/ssl ]]; then
+	needs_cleanup=false
+	cleanup_reason=""
+
+	# Check 1: Puppet service has SSL errors
+	if systemctl status puppet 2>&1 | grep -qE 'certificate.*does not match|key values mismatch|SSL_CTX_use_PrivateKey|Could not parse PKey: unsupported'; then
+		needs_cleanup=true
+		cleanup_reason="Puppet service SSL errors detected"
+	fi
+
+	# Check 2: Certificate exists but certname doesn't match expected hostname
+	# This catches factory reset / environment switch scenarios
+	if [[ -f /etc/puppetlabs/puppet/ssl/certs/*.pem ]] 2>/dev/null; then
+		# Extract certname from existing certificate
+		existing_cert=$(ls /etc/puppetlabs/puppet/ssl/certs/*.pem 2>/dev/null | grep -v ca.pem | head -1)
+		if [[ -n "$existing_cert" ]]; then
+			existing_certname=$(basename "$existing_cert" .pem)
+			# We can't compute expected hostname yet (functions not defined), but we can
+			# check if the cert matches what's in puppet.conf
+			if [[ -f "$PUPPET_CONF_FILE" ]]; then
+				configured_certname=$(grep -E "^\s*certname\s*=" "$PUPPET_CONF_FILE" 2>/dev/null | sed 's/.*=\s*//' | tr -d ' ')
+				if [[ -n "$configured_certname" ]] && [[ "$existing_certname" != "$configured_certname" ]]; then
+					needs_cleanup=true
+					cleanup_reason="Certificate certname mismatch: cert='$existing_certname', config='$configured_certname'"
+				fi
+			fi
+		fi
+	fi
+
+	if [[ "$needs_cleanup" == "true" ]]; then
+		echo "Detected Puppet certificate issues: $cleanup_reason"
+		echo "Cleaning up SSL certificates and config for fresh start..."
 		rm -rf "$FLAG_FILE" "$PUPPET_CONF_FILE" /etc/puppetlabs/puppet/ssl
 	fi
 fi
@@ -501,6 +534,59 @@ ensure_puppet_service() {
 	return 0
 }
 
+# Validate SSL certificates match the configured certname
+# This catches cases where:
+# - Factory reset deleted FLAG_FILE but old SSL certs remain
+# - Environment switch changed hostname but old certs remain
+# - The early check couldn't detect mismatch (no puppet.conf existed yet)
+validate_ssl_certificates() {
+	# Get the configured certname from puppet.conf
+	if [[ ! -f "$PUPPET_CONF_FILE" ]]; then
+		echo "No puppet.conf found, skipping SSL validation"
+		return 0
+	fi
+
+	local configured_certname
+	configured_certname=$(grep -E "^\s*certname\s*=" "$PUPPET_CONF_FILE" 2>/dev/null | sed 's/.*=\s*//' | tr -d ' ')
+	if [[ -z "$configured_certname" ]]; then
+		echo "No certname found in puppet.conf, skipping SSL validation"
+		return 0
+	fi
+
+	echo "Validating SSL certificates for certname: $configured_certname"
+
+	# Check if SSL directory exists with certificates
+	if [[ ! -d /etc/puppetlabs/puppet/ssl/certs ]]; then
+		echo "No SSL certificates found, will be generated fresh"
+		return 0
+	fi
+
+	# Find existing certificate (exclude CA cert)
+	local existing_cert
+	existing_cert=$(ls /etc/puppetlabs/puppet/ssl/certs/*.pem 2>/dev/null | grep -v ca.pem | head -1)
+	if [[ -z "$existing_cert" ]]; then
+		echo "No client certificate found, will be generated fresh"
+		return 0
+	fi
+
+	# Extract certname from existing certificate filename
+	local existing_certname
+	existing_certname=$(basename "$existing_cert" .pem)
+
+	if [[ "$existing_certname" != "$configured_certname" ]]; then
+		echo "SSL certificate mismatch detected!"
+		echo "  Existing cert: $existing_certname"
+		echo "  Configured:    $configured_certname"
+		echo "Cleaning up old SSL certificates for fresh start..."
+		rm -rf /etc/puppetlabs/puppet/ssl
+		echo "SSL certificates cleaned. New certificates will be generated."
+	else
+		echo "SSL certificates valid for certname: $configured_certname"
+	fi
+
+	return 0
+}
+
 # Create flag file to indicate successful completion
 create_flag_file() {
 	echo "$(date): Puppet configuration completed successfully" >"$FLAG_FILE"
@@ -537,6 +623,12 @@ main() {
 	echo "Updating Puppet configuration..."
 	update_puppet_conf || {
 		echo "Error updating Puppet configuration. Exiting."
+		exit 1
+	}
+
+	echo "Validating SSL certificates..."
+	validate_ssl_certificates || {
+		echo "Error validating SSL certificates. Exiting."
 		exit 1
 	}
 
