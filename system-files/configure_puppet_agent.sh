@@ -560,7 +560,8 @@ main() {
 	echo "- Wait ~5 minutes for full ALM environment setup via Puppet"
 }
 
-# Run the main function if the script is executed directly
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# Run the main function if the script is executed directly or piped
+# BASH_SOURCE is empty when piped through bash (curl | bash), so we check for that too
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]] || [[ -z "${BASH_SOURCE[0]:-}" ]]; then
 	main
 fi
