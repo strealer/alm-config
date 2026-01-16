@@ -594,20 +594,50 @@ EOF
     sudo rm -f /var/lib/puppet-config-done
 
     echo ""
-    log_info "Recreating minimal Puppet configuration..."
+    log_info "Regenerating Puppet configuration with correct certname..."
+
+    # Determine certname using system hostname (should have secret from configure_puppet_agent.sh)
+    local certname
+    certname=$(hostname)
+
+    # Validate certname format: <env>-<type>-<secret>-<serial>
+    if ! echo "$certname" | grep -qE "^(prod|stg|dev)-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+$"; then
+        log_error "Hostname '$certname' doesn't match required format: <env>-<type>-<secret>-<serial>"
+        log_error "Example: prod-rpi4-c7368910b6-14b52e5c"
+        log_error "Run configure_puppet_agent.sh to fix hostname, or check /etc/strealer/autosign_secret"
+        return 1
+    fi
+
+    log_info "Using certname: $certname"
+
+    # Download puppet.conf template and substitute certname
+    local config_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/puppet.conf"
     sudo mkdir -p /etc/puppetlabs/puppet
-    echo "[main]" | sudo tee /etc/puppetlabs/puppet/puppet.conf > /dev/null
-    echo "server = puppet.strealer.io" | sudo tee -a /etc/puppetlabs/puppet/puppet.conf > /dev/null
+    if curl -fsSL "$config_url" | sed "s/%%HOSTNAME%%/$certname/g" | sudo tee /etc/puppetlabs/puppet/puppet.conf > /dev/null; then
+        log_success "puppet.conf regenerated with certname: $certname"
+    else
+        log_error "Failed to download puppet.conf template"
+        # Fallback to minimal config with certname
+        log_warning "Using fallback minimal configuration..."
+        cat <<PUPPET_CONF | sudo tee /etc/puppetlabs/puppet/puppet.conf > /dev/null
+[main]
+server = puppet.strealer.io
+
+[agent]
+certname = $certname
+waitforcert = 60
+runinterval = 1800
+environment = production
+PUPPET_CONF
+    fi
 
     echo ""
     log_info "Requesting certificate cleanup on Puppet server..."
-    local hostname
-    hostname=$(hostname)
     # Request cert cleanup via SSH (if key-based auth available) or HTTP API
     # This ensures immediate cleanup without waiting for watchdog
     if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
        root@puppet.strealer.io \
-       "/opt/puppetlabs/bin/puppetserver ca clean --certname $hostname" 2>/dev/null; then
+       "/opt/puppetlabs/bin/puppetserver ca clean --certname $certname" 2>/dev/null; then
         log_success "Old certificate cleaned on server"
     else
         log_warning "Could not clean cert remotely (will be handled by watchdog within 2 min)"
