@@ -291,23 +291,24 @@ detect_alm_environment() {
 # - **Model Classification** - Detects specific RPi models (Pi 4, Pi 5, Zero W, etc.)
 # - **Vendor Recognition** - Identifies AMD64 system manufacturers (Dell, HP, Lenovo, etc.)
 #
-# HOSTNAME PATTERNS GENERATED:
+# HOSTNAME FORMAT: <env>-<type>-<secret>-<serial>
+# The secret must match Puppet server's autosign.conf pattern.
+# Secret is read from /etc/strealer/autosign_secret (set during provisioning).
+#
 # **Staging Raspberry Pi Devices:**
-# - stg-rpi4-12345678 (Pi 4 Model B, staging)
-# - stg-rpi5-abcdef12 (Pi 5 Model B, staging)
+# - stg-rpi4-<secret>-12345678 (Pi 4 Model B, staging)
+# - stg-rpi5-<secret>-abcdef12 (Pi 5 Model B, staging)
 #
 # **Production Raspberry Pi Devices:**
-# - prod-rpi4-12345678 (Pi 4 Model B, production)
-# - prod-rpi5-abcdef12 (Pi 5 Model B, production)
+# - prod-rpi4-<secret>-12345678 (Pi 4 Model B, production)
+# - prod-rpi5-<secret>-abcdef12 (Pi 5 Model B, production)
 #
-# **Staging AMD64 Servers:**
-# - stg-amd-dell-optiplex-9a8b7c6d (Dell OptiPlex, staging)
-#
-# **Production AMD64 Servers:**
-# - prod-amd-dell-optiplex-9a8b7c6d (Dell OptiPlex, production)
+# **AMD64 Servers:**
+# - stg-amd-<secret>-9a8b7c6d (staging)
+# - prod-amd-<secret>-9a8b7c6d (production)
 #
 # **Development/Generic Systems:**
-# - stg-dev-4f5e6d7c or prod-dev-4f5e6d7c
+# - stg-dev-<secret>-4f5e6d7c or prod-dev-<secret>-4f5e6d7c
 #
 # WHY HARDWARE-BASED HOSTNAMES:
 # - **Puppet Identification** - Each device gets unique certificate/configuration
@@ -317,6 +318,21 @@ detect_alm_environment() {
 # ============================================================================
 generate_hostname() {
   local rpi_serial amd_uuid host_id device_vendor device_model rpi_model final_hostname persistent_uuid uuid_path env_prefix
+
+  # Autosign secret - must match pattern in Puppet server's autosign.conf
+  # Read from config file (set during provisioning via pi-gen or manual setup)
+  local AUTOSIGN_SECRET_FILE="/etc/strealer/autosign_secret"
+  local AUTOSIGN_SECRET=""
+
+  if [ -f "$AUTOSIGN_SECRET_FILE" ]; then
+    AUTOSIGN_SECRET=$(cat "$AUTOSIGN_SECRET_FILE" | tr -d '[:space:]')
+  fi
+
+  if [ -z "$AUTOSIGN_SECRET" ]; then
+    echo "ERROR: Autosign secret not found at $AUTOSIGN_SECRET_FILE" >&2
+    echo "Please create this file with the secret from your Puppet server." >&2
+    exit 1
+  fi
 
   # Get environment prefix
   local alm_env
@@ -329,53 +345,38 @@ generate_hostname() {
   if grep -q "^Serial" /proc/cpuinfo; then
     rpi_serial=$(awk '/^Serial/{print $3}' /proc/cpuinfo)
     rpi_model=$(tr -d '\0' </proc/device-tree/model 2>/dev/null)
+    local serial_suffix="${rpi_serial: -8}"
     case "$rpi_model" in
-      *"Raspberry Pi 5 Model B"*)          host_id="${env_prefix}-rpi5-${rpi_serial: -8}" ;;
-      *"Raspberry Pi 4 Model B"*)          host_id="${env_prefix}-rpi4-${rpi_serial: -8}" ;;
-      *"Raspberry Pi 3 Model B Plus"*)     host_id="${env_prefix}-rpi3bp-${rpi_serial: -8}" ;;
-      *"Raspberry Pi 3 Model B"*)          host_id="${env_prefix}-rpi3b-${rpi_serial: -8}" ;;
-      *"Raspberry Pi 3 Model A Plus"*)     host_id="${env_prefix}-rpi3ap-${rpi_serial: -8}" ;;
-      *"Raspberry Pi 2 Model B"*)          host_id="${env_prefix}-rpi2b-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Model B Plus"*)       host_id="${env_prefix}-rpi1bp-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Model A Plus"*)       host_id="${env_prefix}-rpi1ap-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Model B Rev"*|"Raspberry Pi Model B"*) host_id="${env_prefix}-rpi1b-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Model A"*)            host_id="${env_prefix}-rpi1a-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Zero 2 W"*)           host_id="${env_prefix}-rpiz2w-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Zero W"*)             host_id="${env_prefix}-rpizw-${rpi_serial: -8}" ;;
-      *"Raspberry Pi Zero"*)               host_id="${env_prefix}-rpiz-${rpi_serial: -8}" ;;
-      *"Compute Module 4"*)                host_id="${env_prefix}-rpicm4-${rpi_serial: -8}" ;;
-      *"Compute Module 3 Plus"*)           host_id="${env_prefix}-rpicm3p-${rpi_serial: -8}" ;;
-      *"Compute Module 3"*)                host_id="${env_prefix}-rpicm3-${rpi_serial: -8}" ;;
-      *"Compute Module"*)                  host_id="${env_prefix}-rpicm1-${rpi_serial: -8}" ;;
-      *)                                   host_id="${env_prefix}-rpi-${rpi_serial: -8}" ;;
+      *"Raspberry Pi 5 Model B"*)          host_id="${env_prefix}-rpi5-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi 4 Model B"*)          host_id="${env_prefix}-rpi4-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi 3 Model B Plus"*)     host_id="${env_prefix}-rpi3bp-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi 3 Model B"*)          host_id="${env_prefix}-rpi3b-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi 3 Model A Plus"*)     host_id="${env_prefix}-rpi3ap-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi 2 Model B"*)          host_id="${env_prefix}-rpi2b-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi Model B Plus"*)       host_id="${env_prefix}-rpi1bp-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi Model A Plus"*)       host_id="${env_prefix}-rpi1ap-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi Model B Rev"*|"Raspberry Pi Model B"*) host_id="${env_prefix}-rpi1b-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi Model A"*)            host_id="${env_prefix}-rpi1a-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi Zero 2 W"*)           host_id="${env_prefix}-rpiz2w-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi Zero W"*)             host_id="${env_prefix}-rpizw-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Raspberry Pi Zero"*)               host_id="${env_prefix}-rpiz-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Compute Module 4"*)                host_id="${env_prefix}-rpicm4-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Compute Module 3 Plus"*)           host_id="${env_prefix}-rpicm3p-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Compute Module 3"*)                host_id="${env_prefix}-rpicm3-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *"Compute Module"*)                  host_id="${env_prefix}-rpicm1-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
+      *)                                   host_id="${env_prefix}-rpi-${AUTOSIGN_SECRET}-${serial_suffix}" ;;
     esac
 
   elif [ -f /sys/class/dmi/id/product_uuid ]; then
     amd_uuid=$(cat /sys/class/dmi/id/product_uuid | tr -d '-')
-    device_vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null | tr '[:upper:]' '[:lower:]')
-    device_model=$(cat /sys/class/dmi/id/product_name 2>/dev/null | tr '[:upper:]' '[:lower:]')
-
-    case "$device_vendor" in
-      *dell*) device_vendor="dell" ;;
-      *lenovo*) device_vendor="lenovo" ;;
-      *asus*) device_vendor="asus" ;;
-      *acer*) device_vendor="acer" ;;
-      *hp*|*hewlett*) device_vendor="hp" ;;
-      *microsoft*) device_vendor="microsoft" ;;
-      *vmware*) device_vendor="vmware" ;;
-      *qemu*) device_vendor="qemu" ;;
-      *virtualbox*) device_vendor="vbox" ;;
-      *) device_vendor=$(echo "$device_vendor" | tr -cd '[:alnum:]') ;;
-    esac
-
-    device_model=$(echo "$device_model" | tr -cd '[:alnum:]')
-    host_id="${env_prefix}-amd-${device_vendor}-${device_model}-${amd_uuid: -8}"
+    local uuid_suffix="${amd_uuid: -8}"
+    host_id="${env_prefix}-amd-${AUTOSIGN_SECRET}-${uuid_suffix}"
 
   else
     uuid_path="/etc/device_uuid"
     [ ! -f "$uuid_path" ] && uuidgen | tee "$uuid_path" >/dev/null
     persistent_uuid=$(cat "$uuid_path" | tr -d '-')
-    host_id="${env_prefix}-dev-${persistent_uuid: -8}"
+    host_id="${env_prefix}-dev-${AUTOSIGN_SECRET}-${persistent_uuid: -8}"
   fi
 
   # No timestamp - cleaner hostnames
