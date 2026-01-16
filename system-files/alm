@@ -767,6 +767,172 @@ EOF
 }
 
 #
+# Command: alm environment
+# Show or change the ALM environment (staging/production)
+#
+cmd_environment() {
+	if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+		cat <<EOF
+Usage: alm environment [staging|production]
+
+Show or change the ALM environment.
+
+${BLUE}Without arguments:${NC}
+  Shows the current environment setting
+
+${BLUE}With argument:${NC}
+  Changes the environment to staging or production
+
+${RED}⚠️  WARNING: Changing environment will:${NC}
+  1. Update /etc/alm-environment file
+  2. Clean Puppet SSL certificates
+  3. Regenerate hostname with new prefix (stg-/prod-)
+  4. Re-register device with Puppet server
+  5. Re-register device with backend API
+
+${BLUE}Environments:${NC}
+  ${GREEN}staging${NC}     - Uses TEST content, fapi-test.strealer.io
+  ${GREEN}production${NC}  - Uses PRODUCTION+PRELIVE, fapi.strealer.io
+
+Requires: sudo privileges (when changing)
+
+Examples:
+  alm environment              # Show current environment
+  alm env                      # Short alias
+  alm environment staging      # Switch to staging
+  alm environment production   # Switch to production
+EOF
+		return 0
+	fi
+
+	local env_file="/etc/alm-environment"
+	local current_env=""
+
+	# Detect current environment
+	if [[ -n "${ALM_ENVIRONMENT:-}" ]]; then
+		current_env="$ALM_ENVIRONMENT"
+	elif [[ -f "$env_file" ]]; then
+		current_env=$(tr -d '[:space:]' <"$env_file")
+	fi
+
+	# Normalize
+	case "${current_env,,}" in
+	staging | stg) current_env="staging" ;;
+	*) current_env="production" ;;
+	esac
+
+	# If no argument, just show current environment
+	if [[ $# -eq 0 ]]; then
+		echo ""
+		log_info "Current environment: ${GREEN}${current_env}${NC}"
+		echo ""
+		if [[ "$current_env" == "staging" ]]; then
+			echo "  Hostname prefix: stg-"
+			echo "  Content: TEST only"
+			echo "  API: fapi-test.strealer.io"
+		else
+			echo "  Hostname prefix: prod-"
+			echo "  Content: PRODUCTION + PRELIVE"
+			echo "  API: fapi.strealer.io"
+		fi
+		echo ""
+		echo "Current hostname: $(hostname)"
+		echo ""
+		echo "To change: alm environment [staging|production]"
+		return 0
+	fi
+
+	# Validate target environment
+	local target_env="$1"
+	case "${target_env,,}" in
+	staging | stg) target_env="staging" ;;
+	production | prod) target_env="production" ;;
+	*)
+		log_error "Invalid environment: $target_env"
+		echo "Valid options: staging, production"
+		return 1
+		;;
+	esac
+
+	# Check if already in target environment
+	if [[ "$current_env" == "$target_env" ]]; then
+		log_info "Already in ${GREEN}${target_env}${NC} environment"
+		return 0
+	fi
+
+	# Confirm the change
+	echo ""
+	log_warning "This will change environment from ${YELLOW}${current_env}${NC} to ${GREEN}${target_env}${NC}"
+	echo ""
+	echo "This will:"
+	echo "  1. Update environment configuration"
+	echo "  2. Clean Puppet SSL certificates"
+	echo "  3. Change hostname prefix ($(hostname) → new hostname)"
+	echo "  4. Re-register with Puppet server"
+	echo "  5. Re-register with backend API"
+	echo ""
+	read -r -p "Are you sure you want to continue? [y/N] " response
+	if [[ ! "$response" =~ ^[Yy]$ ]]; then
+		log_info "Aborted"
+		return 0
+	fi
+
+	echo ""
+	log_info "Changing environment to ${target_env}..."
+
+	# Write environment file
+	echo "$target_env" | sudo tee "$env_file" >/dev/null
+	log_success "Updated $env_file"
+
+	# Stop containers first
+	log_info "Stopping ALM containers..."
+	$DOCKER_COMPOSE_CMD -f /opt/alm/docker-compose.yml down 2>/dev/null || true
+
+	# Clean up Puppet state
+	log_info "Cleaning Puppet certificates and configuration..."
+	sudo rm -rf /etc/puppetlabs/puppet/ssl
+	sudo rm -f /etc/puppetlabs/puppet/puppet.conf
+	sudo rm -f /var/lib/puppet-config-done
+
+	# Clean up Docker volumes (registration state)
+	log_info "Cleaning registration state..."
+	$DOCKER_CMD volume rm alm_config alm_persist 2>/dev/null || true
+
+	# Request cert cleanup on Puppet server
+	local old_certname
+	old_certname=$(hostname)
+	log_info "Requesting certificate cleanup on Puppet server..."
+	if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+		root@puppet.strealer.io \
+		"/opt/puppetlabs/bin/puppetserver ca clean --certname $old_certname" 2>/dev/null; then
+		log_success "Old certificate cleaned on server"
+	else
+		log_warning "Could not clean cert remotely (will be handled by watchdog)"
+	fi
+
+	# Run Puppet setup with new environment
+	echo ""
+	log_info "Running Puppet setup with new environment..."
+	local setup_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh"
+	if curl -fsSL "$setup_url" | sudo ALM_ENVIRONMENT="$target_env" bash; then
+		log_success "Puppet setup completed with new environment"
+	else
+		log_error "Puppet setup failed"
+		return 1
+	fi
+
+	echo ""
+	log_success "Environment changed to ${GREEN}${target_env}${NC}"
+	echo ""
+	echo "New hostname: $(hostname)"
+	echo ""
+	echo "Next steps:"
+	echo "  - Puppet will configure the device (wait ~5 min)"
+	echo "  - Init container will re-register with backend"
+	echo "  - Check progress: alm logs init"
+}
+
+#
 # Command: alm help
 # Show usage information
 #
@@ -788,6 +954,7 @@ ${BLUE}Commands:${NC}
   ${GREEN}factory-reset${NC}  Complete reset to fresh-boot state (removes Docker)
   ${GREEN}puppet-config${NC}  Update puppet.conf from repository
   ${GREEN}update${NC}         Update the alm CLI tool from repository
+  ${GREEN}environment${NC}    Show or change environment (staging/production)
   ${GREEN}help${NC}           Show this help message
 
 ${BLUE}Examples:${NC}
@@ -798,6 +965,8 @@ ${BLUE}Examples:${NC}
   alm restart           # Restart ALM service
   alm reset             # Reset containers (quick reset)
   alm factory-reset     # Full reset like fresh flash (for testing)
+  alm env               # Show current environment
+  alm env staging       # Switch to staging environment
 
 ${BLUE}Get Help for Specific Commands:${NC}
   alm logs --help
@@ -807,6 +976,7 @@ ${BLUE}Get Help for Specific Commands:${NC}
   alm factory-reset --help
   alm puppet-config --help
   alm update --help
+  alm environment --help
 
 ${BLUE}Automated Registration:${NC}
   • Device registration is FULLY AUTOMATED
@@ -961,6 +1131,9 @@ main() {
 		;;
 	update)
 		cmd_update "$@"
+		;;
+	environment | env)
+		cmd_environment "$@"
 		;;
 	help | --help | -h)
 		cmd_help
