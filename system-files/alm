@@ -617,15 +617,28 @@ EOF
         log_success "puppet.conf regenerated with certname: $certname"
     else
         log_error "Failed to download puppet.conf template"
-        # Fallback to minimal config with certname
-        log_warning "Using fallback minimal configuration..."
+        # Fallback to config matching the template format
+        log_warning "Using fallback configuration..."
         cat <<PUPPET_CONF | sudo tee /etc/puppetlabs/puppet/puppet.conf > /dev/null
+# Puppet Agent Configuration
+# This file is managed by alm factory-reset (fallback mode)
+#
+# SOURCE: alm-config/system-files/puppet.conf
+# DEPLOYED BY: alm factory-reset fallback
+
 [main]
 server = puppet.strealer.io
 
 [agent]
 certname = $certname
 waitforcert = 60
+# Runs the agent service every 30 minutes
+# Optimized for:
+# - Allowing Docker image pulls to complete without overlapping runs
+# - Reducing Puppet server load (600 devices = 20 req/min vs 120 req/min @ 5min)
+# - Better thermal management on Raspberry Pi devices
+# - Reduces unnecessary network traffic and CPU cycles
+# - Deployments still complete within acceptable timeframe (worst case: 30-35 min)
 runinterval = 1800
 environment = production
 PUPPET_CONF
