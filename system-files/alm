@@ -84,29 +84,33 @@ get_container_suffix() {
 }
 
 # Get main container image checksum (SHA256)
+# Always returns 0 to avoid issues with set -e
 get_image_checksum() {
 	local main_container="alm"
 
 	# Get image ID from running/stopped container
 	local image_id
-	image_id=$($DOCKER_CMD ps -a --filter "name=^${main_container}$" --format "{{.Image}}" 2>/dev/null)
+	image_id=$($DOCKER_CMD ps -a --filter "name=^${main_container}$" --format "{{.Image}}" 2>/dev/null) || image_id=""
 
 	if [[ -z "$image_id" ]]; then
 		echo "unknown"
-		return 1
+		return 0
 	fi
 
 	# Get full image digest
 	local digest
-	digest=$($DOCKER_CMD inspect --format='{{index .RepoDigests 0}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{64}' || echo "")
+	digest=$($DOCKER_CMD inspect --format='{{index .RepoDigests 0}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{64}' || true)
 
 	if [[ -n "$digest" ]]; then
 		# Return first 12 characters of SHA256
 		echo "${digest:0:12}"
 	else
 		# Fallback to short image ID
-		$DOCKER_CMD inspect --format='{{.ID}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{12}' || echo "unknown"
+		local short_id
+		short_id=$($DOCKER_CMD inspect --format='{{.ID}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{12}' || true)
+		echo "${short_id:-unknown}"
 	fi
+	return 0
 }
 
 #
