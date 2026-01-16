@@ -475,40 +475,41 @@ EOF
 
 #
 # Command: alm factory-reset
-# Complete reset to simulate fresh flash (removes Docker too)
+# Complete reset - clears all state and triggers fresh Puppet setup
 #
 cmd_factory_reset() {
     if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
         cat <<EOF
 Usage: alm factory-reset [-y|--yes]
 
-Reset device to a FRESH-BOOT state (like a newly flashed device).
+Reset device to a FRESH state and trigger immediate re-setup.
 
 ${RED}⚠️  DANGER ZONE - This goes beyond 'alm reset':${NC}
   1. Removes ALL Docker containers, images, and volumes
-  2. Uninstalls Docker completely (Puppet will reinstall)
+  2. Clears Docker temp files (fixes corrupted state)
   3. Clears Puppet certificate and agent state
   4. Deletes ALL ALM runtime state and config
-  5. Re-enables first-boot configure_puppet_agent.service
+  5. Recreates minimal Puppet config and triggers fresh run
 
 Options:
   -y, --yes    Skip confirmation prompt (DANGEROUS!)
 
-${BLUE}What is KEPT (pi-gen installed):${NC}
+${BLUE}What is KEPT:${NC}
   • User accounts (almadmin, almuser, root)
   • SSH authorized_keys
+  • Docker installation (cleared but not uninstalled)
   • ALM CLI tool, setup-progress script
   • Basic directory structure (/opt/alm)
 
-After this, the next SSH login will:
-  • Show "Installing Docker..." progress
-  • Run configure_puppet_agent.service
-  • Re-run full Puppet setup from scratch
-  • Pull fresh images and start containers
+After this command:
+  • Puppet will immediately start a fresh configuration run
+  • Docker images will be re-pulled from registry
+  • Containers will be recreated
+  • The setup progress screen will show current status
 
 Use this to:
-  • Test the full first-boot experience
-  • Simulate a completely fresh device
+  • Test the full setup experience without rebooting
+  • Recover from corrupted Docker/Puppet state
   • Debug initial setup issues
 
 Requires: sudo privileges
@@ -526,20 +527,22 @@ EOF
     fi
 
     echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${RED}║${NC}  ${RED}⚠️  DANGER: FACTORY RESET - SIMULATES FRESH FLASH${NC}        ${RED}║${NC}"
+    echo -e "${RED}║${NC}  ${RED}⚠️  DANGER: FACTORY RESET - CLEARS ALL STATE${NC}              ${RED}║${NC}"
     echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "This will reset to FRESH-BOOT state by removing:"
-    echo "  • ALL Docker containers, images, and volumes"
-    echo "  • Docker installation (will be reinstalled by Puppet)"
-    echo "  • Puppet certificate and agent state"
-    echo "  • ALL ALM runtime state and config"
+    echo "This will reset the device by:"
+    echo "  • Removing ALL Docker containers, images, and volumes"
+    echo "  • Clearing Docker temp files (fixes corrupted state)"
+    echo "  • Clearing Puppet certificate and SSL state"
+    echo "  • Deleting ALL ALM runtime state and progress files"
+    echo "  • Triggering immediate Puppet re-configuration"
     echo ""
-    echo -e "${BLUE}Keeping (pi-gen installed):${NC}"
+    echo -e "${BLUE}Keeping:${NC}"
     echo "  • User accounts and SSH keys"
+    echo "  • Docker installation"
     echo "  • ALM CLI and setup-progress script"
     echo ""
-    echo -e "${YELLOW}Next login will show full first-boot setup progress.${NC}"
+    echo -e "${YELLOW}Puppet will start fresh setup immediately after reset.${NC}"
     echo ""
 
     if [[ "$skip_confirm" != "true" ]]; then
@@ -552,36 +555,49 @@ EOF
 
     echo ""
     log_info "Stopping services..."
-    cd /opt/alm 2>/dev/null && $DOCKER_COMPOSE_CMD down 2>/dev/null || true
-    sudo systemctl stop docker 2>/dev/null || true
     sudo systemctl stop puppet 2>/dev/null || true
+    cd /opt/alm 2>/dev/null && $DOCKER_COMPOSE_CMD down 2>/dev/null || true
 
     echo ""
     log_info "Removing ALL Docker containers..."
     # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
-    $DOCKER_CMD ps -aq | xargs -r $DOCKER_CMD rm -f 2>/dev/null || true
+    $DOCKER_CMD ps -aq 2>/dev/null | xargs -r $DOCKER_CMD rm -f 2>/dev/null || true
 
     echo ""
     log_info "Removing ALL Docker images..."
     # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
-    $DOCKER_CMD images -q | xargs -r $DOCKER_CMD rmi -f 2>/dev/null || true
+    $DOCKER_CMD images -q 2>/dev/null | xargs -r $DOCKER_CMD rmi -f 2>/dev/null || true
 
     echo ""
     log_info "Removing Docker volumes..."
     # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
-    $DOCKER_CMD volume ls -q | xargs -r $DOCKER_CMD volume rm 2>/dev/null || true
+    $DOCKER_CMD volume ls -q 2>/dev/null | xargs -r $DOCKER_CMD volume rm 2>/dev/null || true
 
     echo ""
-    log_info "Uninstalling Docker..."
-    sudo apt-get purge -y docker-ce docker-ce-cli containerd.io docker-compose-plugin docker-buildx-plugin 2>/dev/null || true
-    sudo rm -rf /var/lib/docker /etc/docker /var/lib/containerd
+    log_info "Clearing Docker temp files and restarting Docker..."
+    sudo systemctl stop docker 2>/dev/null || true
+    sudo rm -rf /var/lib/docker/tmp/* 2>/dev/null || true
+    sudo systemctl start docker 2>/dev/null || true
+    sleep 2
+
+    echo ""
+    log_info "Ensuring docker-compose-plugin is installed..."
+    if ! docker compose version &>/dev/null; then
+        sudo apt-get update -qq 2>/dev/null
+        sudo apt-get install -y docker-compose-plugin 2>/dev/null || true
+    fi
 
     echo ""
     log_info "Clearing Puppet state..."
     sudo rm -rf /etc/puppetlabs/puppet/ssl
-    sudo rm -f /etc/puppetlabs/puppet/puppet.conf
     sudo rm -rf /opt/puppetlabs/puppet/cache
-    sudo rm -f /var/lib/puppet-config-done  # Allow configure_puppet_agent.sh to re-run
+    sudo rm -f /var/lib/puppet-config-done
+
+    echo ""
+    log_info "Recreating minimal Puppet configuration..."
+    sudo mkdir -p /etc/puppetlabs/puppet
+    echo "[main]" | sudo tee /etc/puppetlabs/puppet/puppet.conf > /dev/null
+    echo "server = puppet.strealer.io" | sudo tee -a /etc/puppetlabs/puppet/puppet.conf > /dev/null
 
     echo ""
     log_info "Clearing ALM runtime state..."
@@ -589,19 +605,20 @@ EOF
     sudo rm -f /var/log/alm/*.log 2>/dev/null || true
 
     echo ""
-    log_info "Re-enabling first-boot services..."
-    sudo systemctl enable configure_puppet_agent.service 2>/dev/null || true
+    log_info "Starting Puppet agent for fresh configuration..."
+    sudo systemctl start puppet
 
     echo ""
     log_success "Factory reset complete!"
     echo ""
-    echo -e "${CYAN}Next steps:${NC}"
-    echo "  1. Log out and log back in as root"
-    echo "  2. The setup progress screen will appear"
-    echo "  3. configure_puppet_agent.service will run"
-    echo "  4. Puppet will install Docker and configure everything"
+    echo -e "${CYAN}What's happening now:${NC}"
+    echo "  • Puppet is obtaining a new certificate"
+    echo "  • Docker images will be pulled (2-4 minutes)"
+    echo "  • Containers will be started automatically"
     echo ""
-    log_info "Run: exit"
+    echo -e "${BLUE}Monitor progress:${NC}"
+    echo "  • Run: /usr/local/bin/alm-setup-progress"
+    echo "  • Or:  journalctl -u puppet -f"
     echo ""
 }
 
