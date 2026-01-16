@@ -14,11 +14,11 @@ set -euo pipefail
 # Docker command - use sudo only if not running as root
 # This ensures commands work both interactively and via SSH as root
 if [[ $EUID -eq 0 ]]; then
-    DOCKER_CMD="docker"
-    DOCKER_COMPOSE_CMD="docker compose"
+	DOCKER_CMD="docker"
+	DOCKER_COMPOSE_CMD="docker compose"
 else
-    DOCKER_CMD="sudo docker"
-    DOCKER_COMPOSE_CMD="sudo docker compose"
+	DOCKER_CMD="sudo docker"
+	DOCKER_COMPOSE_CMD="sudo docker compose"
 fi
 
 # Colors for output (use $'...' syntax for escape sequence interpretation)
@@ -31,78 +31,78 @@ readonly NC=$'\033[0m' # No Color
 
 # Helper functions
 log_info() {
-    echo -e "${BLUE}ℹ${NC} $*"
+	echo -e "${BLUE}ℹ${NC} $*"
 }
 
 log_success() {
-    echo -e "${GREEN}✅${NC} $*"
+	echo -e "${GREEN}✅${NC} $*"
 }
 
 log_warning() {
-    echo -e "${YELLOW}⚠${NC} $*"
+	echo -e "${YELLOW}⚠${NC} $*"
 }
 
 log_error() {
-    echo -e "${RED}❌${NC} $*" >&2
+	echo -e "${RED}❌${NC} $*" >&2
 }
 
 # Check if container is running via HTTP health check (no docker access needed)
 is_container_healthy() {
-    local port=$1
-    curl -sf --max-time 1 "http://localhost:${port}" >/dev/null 2>&1
+	local port=$1
+	curl -sf --max-time 1 "http://localhost:${port}" >/dev/null 2>&1
 }
 
 # Get device IP address
 get_device_ip() {
-    ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+' || echo "unknown"
+	ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+' || echo "unknown"
 }
 
 # Get architecture
 get_architecture() {
-    local arch
-    arch=$(uname -m)
-    case "$arch" in
-        aarch64|arm64) echo "ARM64" ;;
-        x86_64|amd64) echo "AMD64" ;;
-        *) echo "$arch" ;;
-    esac
+	local arch
+	arch=$(uname -m)
+	case "$arch" in
+	aarch64 | arm64) echo "ARM64" ;;
+	x86_64 | amd64) echo "AMD64" ;;
+	*) echo "$arch" ;;
+	esac
 }
 
 # Detect container suffix based on architecture
 get_container_suffix() {
-    local arch
-    arch=$(uname -m)
-    if [[ "$arch" == "aarch64" ]] || [[ "$arch" == "arm64" ]]; then
-        echo "arm64"
-    else
-        echo "amd64"
-    fi
+	local arch
+	arch=$(uname -m)
+	if [[ "$arch" == "aarch64" ]] || [[ "$arch" == "arm64" ]]; then
+		echo "arm64"
+	else
+		echo "amd64"
+	fi
 }
 
 # Get main container image checksum (SHA256)
 get_image_checksum() {
-    local main_container="alm"
+	local main_container="alm"
 
-    # Get image ID from running/stopped container
-    local image_id
-    image_id=$($DOCKER_CMD ps -a --filter "name=^${main_container}$" --format "{{.Image}}" 2>/dev/null)
+	# Get image ID from running/stopped container
+	local image_id
+	image_id=$($DOCKER_CMD ps -a --filter "name=^${main_container}$" --format "{{.Image}}" 2>/dev/null)
 
-    if [[ -z "$image_id" ]]; then
-        echo "unknown"
-        return 1
-    fi
+	if [[ -z "$image_id" ]]; then
+		echo "unknown"
+		return 1
+	fi
 
-    # Get full image digest
-    local digest
-    digest=$($DOCKER_CMD inspect --format='{{index .RepoDigests 0}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{64}' || echo "")
+	# Get full image digest
+	local digest
+	digest=$($DOCKER_CMD inspect --format='{{index .RepoDigests 0}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{64}' || echo "")
 
-    if [[ -n "$digest" ]]; then
-        # Return first 12 characters of SHA256
-        echo "${digest:0:12}"
-    else
-        # Fallback to short image ID
-        $DOCKER_CMD inspect --format='{{.ID}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{12}' || echo "unknown"
-    fi
+	if [[ -n "$digest" ]]; then
+		# Return first 12 characters of SHA256
+		echo "${digest:0:12}"
+	else
+		# Fallback to short image ID
+		$DOCKER_CMD inspect --format='{{.ID}}' "$image_id" 2>/dev/null | grep -oP 'sha256:\K[a-f0-9]{12}' || echo "unknown"
+	fi
 }
 
 #
@@ -110,8 +110,8 @@ get_image_checksum() {
 # Show device and container status
 #
 cmd_status() {
-    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
-        cat <<EOF
+	if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+		cat <<EOF
 Usage: alm status
 
 Display device information and container status.
@@ -128,97 +128,97 @@ Shows:
 Examples:
   alm status
 EOF
-        return 0
-    fi
+		return 0
+	fi
 
-    local ip
-    local hostname
-    local arch
-    local checksum
+	local ip
+	local hostname
+	local arch
+	local checksum
 
-    ip=$(get_device_ip)
-    hostname=$(hostname)
-    arch=$(get_architecture)
-    checksum=$(get_image_checksum)
+	ip=$(get_device_ip)
+	hostname=$(hostname)
+	arch=$(get_architecture)
+	checksum=$(get_image_checksum)
 
-    echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║${NC}  ${GREEN}ALM Device Status${NC}                                        ${CYAN}║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
+	echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+	echo -e "${CYAN}║${NC}  ${GREEN}ALM Device Status${NC}                                        ${CYAN}║${NC}"
+	echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+	echo ""
 
-    echo -e "${BLUE}Image Checksum:${NC}"
-    echo "  SHA256: $checksum"
-    echo ""
+	echo -e "${BLUE}Image Checksum:${NC}"
+	echo "  SHA256: $checksum"
+	echo ""
 
-    echo -e "${BLUE}Device Information:${NC}"
-    echo "  IP Address:   $ip"
-    echo "  Hostname:     $hostname"
-    echo "  Architecture: $arch"
-    echo ""
+	echo -e "${BLUE}Device Information:${NC}"
+	echo "  IP Address:   $ip"
+	echo "  Hostname:     $hostname"
+	echo "  Architecture: $arch"
+	echo ""
 
-    echo -e "${BLUE}Docker Service:${NC}"
-    if systemctl is-active --quiet docker 2>/dev/null; then
-        log_success "Docker is running"
-    else
-        log_error "Docker is not running"
-        echo "  Start with: sudo systemctl start docker"
-        return 1
-    fi
-    echo ""
+	echo -e "${BLUE}Docker Service:${NC}"
+	if systemctl is-active --quiet docker 2>/dev/null; then
+		log_success "Docker is running"
+	else
+		log_error "Docker is not running"
+		echo "  Start with: sudo systemctl start docker"
+		return 1
+	fi
+	echo ""
 
-    echo -e "${BLUE}Container Status:${NC}"
+	echo -e "${BLUE}Container Status:${NC}"
 
-    local init_container="alm_init"
-    local main_container="alm"
+	local init_container="alm_init"
+	local main_container="alm"
 
-    # Check init container (should exit after successful registration)
-    if $DOCKER_CMD ps -a --format "{{.Names}}" | grep -Fxq "$init_container"; then
-        init_status=$($DOCKER_CMD ps -a --filter "name=^${init_container}$" --format "{{.Status}}")
-        if echo "$init_status" | head -n1 | grep -q "Exited (0)"; then
-            log_success "Init container: Completed successfully"
-            echo "    Registration complete, device initialized"
-        else
-            log_warning "Init container: $init_status"
-            echo "    Device may still be registering..."
-        fi
-    else
-        log_info "Init container: Not found (may have been cleaned up)"
-    fi
+	# Check init container (should exit after successful registration)
+	if $DOCKER_CMD ps -a --format "{{.Names}}" | grep -Fxq "$init_container"; then
+		init_status=$($DOCKER_CMD ps -a --filter "name=^${init_container}$" --format "{{.Status}}")
+		if echo "$init_status" | head -n1 | grep -q "Exited (0)"; then
+			log_success "Init container: Completed successfully"
+			echo "    Registration complete, device initialized"
+		else
+			log_warning "Init container: $init_status"
+			echo "    Device may still be registering..."
+		fi
+	else
+		log_info "Init container: Not found (may have been cleaned up)"
+	fi
 
-    # Check main container (via HTTP on port 80)
-    if $DOCKER_CMD ps -a --format "{{.Names}}" | grep -Fxq "$main_container"; then
-        if is_container_healthy 80; then
-            log_success "Main container: Running"
-            echo "    Port 80: Application service"
-            echo ""
-            echo -e "${GREEN}Service URL:${NC} http://$ip:80"
-        else
-            log_warning "Main container: Container exists but HTTP check failed"
-            echo "    Device may still be initializing"
-            echo "    Check logs: alm logs"
-        fi
-    else
-        log_warning "Main container: Not found"
-        echo "    Start containers: alm restart"
-    fi
+	# Check main container (via HTTP on port 80)
+	if $DOCKER_CMD ps -a --format "{{.Names}}" | grep -Fxq "$main_container"; then
+		if is_container_healthy 80; then
+			log_success "Main container: Running"
+			echo "    Port 80: Application service"
+			echo ""
+			echo -e "${GREEN}Service URL:${NC} http://$ip:80"
+		else
+			log_warning "Main container: Container exists but HTTP check failed"
+			echo "    Device may still be initializing"
+			echo "    Check logs: alm logs"
+		fi
+	else
+		log_warning "Main container: Not found"
+		echo "    Start containers: alm restart"
+	fi
 
-    echo ""
-    echo -e "${BLUE}Telemetry Worker:${NC}"
-    telemetry_status=$($DOCKER_CMD ps -a --filter "name=^alm_telemetry$" --format "{{.Status}}")
-    if [[ -n "$telemetry_status" ]]; then
-        if echo "$telemetry_status" | grep -qi "Up"; then
-            log_success "Telemetry container: Running"
-            echo "    Sends device info every 5 minutes"
-        else
-            log_warning "Telemetry container: $telemetry_status"
-            echo "    Check logs: alm logs telemetry"
-        fi
-    else
-        log_warning "Telemetry container: Not found"
-        echo "    Start containers: alm restart"
-    fi
+	echo ""
+	echo -e "${BLUE}Telemetry Worker:${NC}"
+	telemetry_status=$($DOCKER_CMD ps -a --filter "name=^alm_telemetry$" --format "{{.Status}}")
+	if [[ -n "$telemetry_status" ]]; then
+		if echo "$telemetry_status" | grep -qi "Up"; then
+			log_success "Telemetry container: Running"
+			echo "    Sends device info every 5 minutes"
+		else
+			log_warning "Telemetry container: $telemetry_status"
+			echo "    Check logs: alm logs telemetry"
+		fi
+	else
+		log_warning "Telemetry container: Not found"
+		echo "    Start containers: alm restart"
+	fi
 
-    echo ""
+	echo ""
 }
 
 #
@@ -226,27 +226,27 @@ EOF
 # Follow container logs
 #
 cmd_logs() {
-    local container_type="main"
-    local follow=true
-    local tail_lines=50
+	local container_type="main"
+	local follow=true
+	local tail_lines=50
 
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            init|main|telemetry)
-                container_type="$1"
-                shift
-                ;;
-            --no-follow|-n)
-                follow=false
-                shift
-                ;;
-            --tail)
-                tail_lines="$2"
-                shift 2
-                ;;
-            --help|-h)
-                cat <<EOF
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		init | main | telemetry)
+			container_type="$1"
+			shift
+			;;
+		--no-follow | -n)
+			follow=false
+			shift
+			;;
+		--tail)
+			tail_lines="$2"
+			shift 2
+			;;
+		--help | -h)
+			cat <<EOF
 Usage: alm logs [CONTAINER] [OPTIONS]
 
 Follow container logs in real-time.
@@ -265,60 +265,60 @@ Examples:
   alm logs --tail 100   # Show last 100 lines
   alm logs init -n      # Show init logs without following
 EOF
-                return 0
-                ;;
-            *)
-                log_error "Unknown option: $1"
-                echo "Use 'alm logs --help' for usage information"
-                return 1
-                ;;
-        esac
-    done
+			return 0
+			;;
+		*)
+			log_error "Unknown option: $1"
+			echo "Use 'alm logs --help' for usage information"
+			return 1
+			;;
+		esac
+	done
 
-    local container_name
-    case "$container_type" in
-        init)
-            container_name="alm_init"
-            ;;
-        telemetry)
-            container_name="alm_telemetry"
-            ;;
-        *)
-            container_name="alm"
-            ;;
-    esac
+	local container_name
+	case "$container_type" in
+	init)
+		container_name="alm_init"
+		;;
+	telemetry)
+		container_name="alm_telemetry"
+		;;
+	*)
+		container_name="alm"
+		;;
+	esac
 
-    # Check if container exists
-    if ! $DOCKER_CMD ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$container_name"; then
-        log_error "Container '$container_name' does not exist"
-        echo ""
-        echo "This usually means:"
-        if [[ "$container_name" == "alm_init" ]]; then
-            echo "  • Device setup is still in progress (Puppet running)"
-            echo "  • Init container completed and was removed (check 'alm logs' for main container)"
-        else
-            echo "  • Device setup is still in progress"
-            echo "  • Containers haven't been started yet"
-        fi
-        echo ""
-        echo "Run 'alm status' to check current state"
-        return 1
-    fi
+	# Check if container exists
+	if ! $DOCKER_CMD ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$container_name"; then
+		log_error "Container '$container_name' does not exist"
+		echo ""
+		echo "This usually means:"
+		if [[ "$container_name" == "alm_init" ]]; then
+			echo "  • Device setup is still in progress (Puppet running)"
+			echo "  • Init container completed and was removed (check 'alm logs' for main container)"
+		else
+			echo "  • Device setup is still in progress"
+			echo "  • Containers haven't been started yet"
+		fi
+		echo ""
+		echo "Run 'alm status' to check current state"
+		return 1
+	fi
 
-    log_info "Showing logs for: $container_name"
-    echo ""
+	log_info "Showing logs for: $container_name"
+	echo ""
 
-    if [[ "$follow" == true ]]; then
-        $DOCKER_CMD logs -f --tail "$tail_lines" "$container_name" 2>&1 || {
-            log_error "Could not access container logs (requires sudo/docker access)"
-            return 1
-        }
-    else
-        $DOCKER_CMD logs --tail "$tail_lines" "$container_name" 2>&1 || {
-            log_error "Could not access container logs (requires sudo/docker access)"
-            return 1
-        }
-    fi
+	if [[ "$follow" == true ]]; then
+		$DOCKER_CMD logs -f --tail "$tail_lines" "$container_name" 2>&1 || {
+			log_error "Could not access container logs (requires sudo/docker access)"
+			return 1
+		}
+	else
+		$DOCKER_CMD logs --tail "$tail_lines" "$container_name" 2>&1 || {
+			log_error "Could not access container logs (requires sudo/docker access)"
+			return 1
+		}
+	fi
 }
 
 #
@@ -326,8 +326,8 @@ EOF
 # Restart ALM containers
 #
 cmd_restart() {
-    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
-        cat <<EOF
+	if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+		cat <<EOF
 Usage: alm restart
 
 Restart the ALM containers using Docker Compose.
@@ -342,32 +342,32 @@ Requires: sudo privileges
 Examples:
   alm restart
 EOF
-        return 0
-    fi
+		return 0
+	fi
 
-    log_info "Restarting ALM containers..."
-    echo ""
+	log_info "Restarting ALM containers..."
+	echo ""
 
-    cd /opt/alm 2>/dev/null || {
-        log_error "ALM directory not found at /opt/alm"
-        return 1
-    }
+	cd /opt/alm 2>/dev/null || {
+		log_error "ALM directory not found at /opt/alm"
+		return 1
+	}
 
-    log_info "Stopping containers..."
-    $DOCKER_COMPOSE_CMD down 2>/dev/null || true
+	log_info "Stopping containers..."
+	$DOCKER_COMPOSE_CMD down 2>/dev/null || true
 
-    log_info "Starting containers..."
-    # Uses unified service names (multi-arch auto-detection by Docker)
-    $DOCKER_COMPOSE_CMD up -d --remove-orphans alm_init alm alm_telemetry
+	log_info "Starting containers..."
+	# Uses unified service names (multi-arch auto-detection by Docker)
+	$DOCKER_COMPOSE_CMD up -d --remove-orphans alm_init alm alm_telemetry
 
-    log_success "Containers restarted successfully"
-    echo ""
+	log_success "Containers restarted successfully"
+	echo ""
 
-    log_info "Waiting for containers to start..."
-    sleep 5
+	log_info "Waiting for containers to start..."
+	sleep 5
 
-    echo ""
-    cmd_status
+	echo ""
+	cmd_status
 }
 
 #
@@ -375,8 +375,8 @@ EOF
 # Reset device to allow fresh registration
 #
 cmd_reset() {
-    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
-        cat <<EOF
+	if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+		cat <<EOF
 Usage: alm reset [-y|--yes]
 
 Reset the ALM device to start fresh registration.
@@ -401,76 +401,76 @@ Examples:
   alm reset        # Interactive with confirmation
   alm reset -y     # Skip confirmation (for scripts)
 EOF
-        return 0
-    fi
+		return 0
+	fi
 
-    local skip_confirm=false
-    if [[ "${1:-}" == "-y" ]] || [[ "${1:-}" == "--yes" ]]; then
-        skip_confirm=true
-    fi
+	local skip_confirm=false
+	if [[ "${1:-}" == "-y" ]] || [[ "${1:-}" == "--yes" ]]; then
+		skip_confirm=true
+	fi
 
-    echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${RED}║${NC}  ${YELLOW}WARNING: This will delete all ALM data and config${NC}         ${RED}║${NC}"
-    echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-    echo "This will:"
-    echo "  • Stop all running containers"
-    echo "  • Remove all containers and volumes"
-    echo "  • Delete registration and configuration data"
-    echo "  • Reset device to fresh state"
-    echo ""
+	echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+	echo -e "${RED}║${NC}  ${YELLOW}WARNING: This will delete all ALM data and config${NC}         ${RED}║${NC}"
+	echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+	echo ""
+	echo "This will:"
+	echo "  • Stop all running containers"
+	echo "  • Remove all containers and volumes"
+	echo "  • Delete registration and configuration data"
+	echo "  • Reset device to fresh state"
+	echo ""
 
-    if [[ "$skip_confirm" != "true" ]]; then
-        read -r -p "Are you sure you want to reset? [y/N]: " response
-        if [[ ! "$response" =~ ^[Yy]$ ]]; then
-            log_info "Reset cancelled"
-            return 0
-        fi
-    fi
+	if [[ "$skip_confirm" != "true" ]]; then
+		read -r -p "Are you sure you want to reset? [y/N]: " response
+		if [[ ! "$response" =~ ^[Yy]$ ]]; then
+			log_info "Reset cancelled"
+			return 0
+		fi
+	fi
 
-    cd /opt/alm 2>/dev/null || {
-        log_error "ALM directory not found at /opt/alm"
-        return 1
-    }
+	cd /opt/alm 2>/dev/null || {
+		log_error "ALM directory not found at /opt/alm"
+		return 1
+	}
 
-    echo ""
-    log_info "Stopping containers..."
-    $DOCKER_COMPOSE_CMD down 2>/dev/null || true
+	echo ""
+	log_info "Stopping containers..."
+	$DOCKER_COMPOSE_CMD down 2>/dev/null || true
 
-    echo ""
-    log_info "Removing containers..."
+	echo ""
+	log_info "Removing containers..."
 
-    # Stop and remove containers (unified names - no architecture suffix)
-    $DOCKER_CMD stop "alm_init" 2>/dev/null || true
-    $DOCKER_CMD stop "alm" 2>/dev/null || true
-    $DOCKER_CMD stop "alm_telemetry" 2>/dev/null || true
-    $DOCKER_CMD rm "alm_init" 2>/dev/null || true
-    $DOCKER_CMD rm "alm" 2>/dev/null || true
-    $DOCKER_CMD rm "alm_telemetry" 2>/dev/null || true
+	# Stop and remove containers (unified names - no architecture suffix)
+	$DOCKER_CMD stop "alm_init" 2>/dev/null || true
+	$DOCKER_CMD stop "alm" 2>/dev/null || true
+	$DOCKER_CMD stop "alm_telemetry" 2>/dev/null || true
+	$DOCKER_CMD rm "alm_init" 2>/dev/null || true
+	$DOCKER_CMD rm "alm" 2>/dev/null || true
+	$DOCKER_CMD rm "alm_telemetry" 2>/dev/null || true
 
-    echo ""
-    log_info "Removing Docker volumes..."
+	echo ""
+	log_info "Removing Docker volumes..."
 
-    # Remove volumes with docker compose
-    $DOCKER_COMPOSE_CMD down -v 2>/dev/null || true
+	# Remove volumes with docker compose
+	$DOCKER_COMPOSE_CMD down -v 2>/dev/null || true
 
-    # Clean up any orphaned volumes
-    # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
-    $DOCKER_CMD volume ls -q | grep -E "alm_config|alm_persist" | xargs -r $DOCKER_CMD volume rm 2>/dev/null || true
+	# Clean up any orphaned volumes
+	# shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
+	$DOCKER_CMD volume ls -q | grep -E "alm_config|alm_persist" | xargs -r $DOCKER_CMD volume rm 2>/dev/null || true
 
-    echo ""
-    log_success "Reset complete!"
-    echo ""
-    log_info "Starting containers for automated re-registration..."
+	echo ""
+	log_success "Reset complete!"
+	echo ""
+	log_info "Starting containers for automated re-registration..."
 
-    # Start containers using docker compose (Puppet manages this normally)
-    $DOCKER_COMPOSE_CMD up -d --remove-orphans alm_init alm alm_telemetry
+	# Start containers using docker compose (Puppet manages this normally)
+	$DOCKER_COMPOSE_CMD up -d --remove-orphans alm_init alm alm_telemetry
 
-    echo ""
-    log_success "Containers started - device is re-registering"
-    log_info "Registration happens in background (no user action needed)"
-    log_info "Check progress with: alm logs init"
-    echo ""
+	echo ""
+	log_success "Containers started - device is re-registering"
+	log_info "Registration happens in background (no user action needed)"
+	log_info "Check progress with: alm logs init"
+	echo ""
 }
 
 #
@@ -478,8 +478,8 @@ EOF
 # Complete reset - clears all state and triggers fresh Puppet setup
 #
 cmd_factory_reset() {
-    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
-        cat <<EOF
+	if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+		cat <<EOF
 Usage: alm factory-reset [-y|--yes]
 
 Reset device to a FRESH state and trigger immediate re-setup.
@@ -518,121 +518,121 @@ Examples:
   alm factory-reset        # Interactive with confirmation
   alm factory-reset -y     # Skip confirmation (DANGEROUS!)
 EOF
-        return 0
-    fi
+		return 0
+	fi
 
-    local skip_confirm=false
-    if [[ "${1:-}" == "-y" ]] || [[ "${1:-}" == "--yes" ]]; then
-        skip_confirm=true
-    fi
+	local skip_confirm=false
+	if [[ "${1:-}" == "-y" ]] || [[ "${1:-}" == "--yes" ]]; then
+		skip_confirm=true
+	fi
 
-    echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${RED}║${NC}  ${RED}⚠️  DANGER: FACTORY RESET - CLEARS ALL STATE${NC}              ${RED}║${NC}"
-    echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-    echo "This will reset the device by:"
-    echo "  • Removing ALL Docker containers, images, and volumes"
-    echo "  • Clearing Docker temp files (fixes corrupted state)"
-    echo "  • Clearing Puppet certificate and SSL state"
-    echo "  • Deleting ALL ALM runtime state and progress files"
-    echo "  • Triggering immediate Puppet re-configuration"
-    echo ""
-    echo -e "${BLUE}Keeping:${NC}"
-    echo "  • User accounts and SSH keys"
-    echo "  • Docker installation"
-    echo "  • ALM CLI and setup-progress script"
-    echo ""
-    echo -e "${YELLOW}Puppet will start fresh setup immediately after reset.${NC}"
-    echo ""
+	echo -e "${RED}╔════════════════════════════════════════════════════════════╗${NC}"
+	echo -e "${RED}║${NC}  ${RED}⚠️  DANGER: FACTORY RESET - CLEARS ALL STATE${NC}              ${RED}║${NC}"
+	echo -e "${RED}╚════════════════════════════════════════════════════════════╝${NC}"
+	echo ""
+	echo "This will reset the device by:"
+	echo "  • Removing ALL Docker containers, images, and volumes"
+	echo "  • Clearing Docker temp files (fixes corrupted state)"
+	echo "  • Clearing Puppet certificate and SSL state"
+	echo "  • Deleting ALL ALM runtime state and progress files"
+	echo "  • Triggering immediate Puppet re-configuration"
+	echo ""
+	echo -e "${BLUE}Keeping:${NC}"
+	echo "  • User accounts and SSH keys"
+	echo "  • Docker installation"
+	echo "  • ALM CLI and setup-progress script"
+	echo ""
+	echo -e "${YELLOW}Puppet will start fresh setup immediately after reset.${NC}"
+	echo ""
 
-    if [[ "$skip_confirm" != "true" ]]; then
-        read -r -p "Type 'FACTORY RESET' to confirm: " response
-        if [[ "$response" != "FACTORY RESET" ]]; then
-            log_info "Factory reset cancelled"
-            return 0
-        fi
-    fi
+	if [[ "$skip_confirm" != "true" ]]; then
+		read -r -p "Type 'FACTORY RESET' to confirm: " response
+		if [[ "$response" != "FACTORY RESET" ]]; then
+			log_info "Factory reset cancelled"
+			return 0
+		fi
+	fi
 
-    echo ""
-    log_info "Stopping services..."
-    sudo systemctl stop puppet 2>/dev/null || true
-    cd /opt/alm 2>/dev/null && $DOCKER_COMPOSE_CMD down 2>/dev/null || true
+	echo ""
+	log_info "Stopping services..."
+	sudo systemctl stop puppet 2>/dev/null || true
+	cd /opt/alm 2>/dev/null && $DOCKER_COMPOSE_CMD down 2>/dev/null || true
 
-    echo ""
-    log_info "Removing ALL Docker containers..."
-    # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
-    $DOCKER_CMD ps -aq 2>/dev/null | xargs -r $DOCKER_CMD rm -f 2>/dev/null || true
+	echo ""
+	log_info "Removing ALL Docker containers..."
+	# shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
+	$DOCKER_CMD ps -aq 2>/dev/null | xargs -r $DOCKER_CMD rm -f 2>/dev/null || true
 
-    echo ""
-    log_info "Removing ALL Docker images..."
-    # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
-    $DOCKER_CMD images -q 2>/dev/null | xargs -r $DOCKER_CMD rmi -f 2>/dev/null || true
+	echo ""
+	log_info "Removing ALL Docker images..."
+	# shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
+	$DOCKER_CMD images -q 2>/dev/null | xargs -r $DOCKER_CMD rmi -f 2>/dev/null || true
 
-    echo ""
-    log_info "Removing Docker volumes..."
-    # shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
-    $DOCKER_CMD volume ls -q 2>/dev/null | xargs -r $DOCKER_CMD volume rm 2>/dev/null || true
+	echo ""
+	log_info "Removing Docker volumes..."
+	# shellcheck disable=SC2086 # Word splitting intentional - DOCKER_CMD may be "sudo docker"
+	$DOCKER_CMD volume ls -q 2>/dev/null | xargs -r $DOCKER_CMD volume rm 2>/dev/null || true
 
-    echo ""
-    log_info "Clearing Docker temp files and restarting Docker..."
-    sudo systemctl stop docker 2>/dev/null || true
-    sudo rm -rf /var/lib/docker/tmp/* 2>/dev/null || true
-    sudo systemctl start docker 2>/dev/null || true
-    sleep 2
+	echo ""
+	log_info "Clearing Docker temp files and restarting Docker..."
+	sudo systemctl stop docker 2>/dev/null || true
+	sudo rm -rf /var/lib/docker/tmp/* 2>/dev/null || true
+	sudo systemctl start docker 2>/dev/null || true
+	sleep 2
 
-    echo ""
-    log_info "Ensuring docker-compose-plugin is installed..."
-    if ! docker compose version &>/dev/null; then
-        sudo apt-get update -qq 2>/dev/null
-        sudo apt-get install -y docker-compose-plugin 2>/dev/null || true
-    fi
+	echo ""
+	log_info "Ensuring docker-compose-plugin is installed..."
+	if ! docker compose version &>/dev/null; then
+		sudo apt-get update -qq 2>/dev/null
+		sudo apt-get install -y docker-compose-plugin 2>/dev/null || true
+	fi
 
-    echo ""
-    log_info "Clearing Puppet state..."
-    sudo rm -rf /etc/puppetlabs/puppet/ssl
-    sudo rm -rf /opt/puppetlabs/puppet/cache
-    sudo rm -f /var/lib/puppet-config-done
+	echo ""
+	log_info "Clearing Puppet state..."
+	sudo rm -rf /etc/puppetlabs/puppet/ssl
+	sudo rm -rf /opt/puppetlabs/puppet/cache
+	sudo rm -f /var/lib/puppet-config-done
 
-    echo ""
-    log_info "Requesting certificate cleanup on Puppet server..."
-    local certname
-    certname=$(hostname)
-    # Request cert cleanup via SSH (if key-based auth available)
-    if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
-       root@puppet.strealer.io \
-       "/opt/puppetlabs/bin/puppetserver ca clean --certname $certname" 2>/dev/null; then
-        log_success "Old certificate cleaned on server"
-    else
-        log_warning "Could not clean cert remotely (will be handled by watchdog within 2 min)"
-    fi
+	echo ""
+	log_info "Requesting certificate cleanup on Puppet server..."
+	local certname
+	certname=$(hostname)
+	# Request cert cleanup via SSH (if key-based auth available)
+	if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+		root@puppet.strealer.io \
+		"/opt/puppetlabs/bin/puppetserver ca clean --certname $certname" 2>/dev/null; then
+		log_success "Old certificate cleaned on server"
+	else
+		log_warning "Could not clean cert remotely (will be handled by watchdog within 2 min)"
+	fi
 
-    echo ""
-    log_info "Clearing ALM runtime state..."
-    sudo rm -rf /var/lib/alm
-    sudo rm -f /var/log/alm/*.log 2>/dev/null || true
+	echo ""
+	log_info "Clearing ALM runtime state..."
+	sudo rm -rf /var/lib/alm
+	sudo rm -f /var/log/alm/*.log 2>/dev/null || true
 
-    echo ""
-    log_info "Running Puppet setup script from repository..."
-    local setup_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh"
-    if curl -fsSL "$setup_url" | sudo bash; then
-        log_success "Puppet setup completed"
-    else
-        log_error "Puppet setup script failed"
-        return 1
-    fi
+	echo ""
+	log_info "Running Puppet setup script from repository..."
+	local setup_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh"
+	if curl -fsSL "$setup_url" | sudo bash; then
+		log_success "Puppet setup completed"
+	else
+		log_error "Puppet setup script failed"
+		return 1
+	fi
 
-    echo ""
-    log_success "Factory reset complete!"
-    echo ""
-    echo -e "${CYAN}What's happening now:${NC}"
-    echo "  • Puppet agent is running and will configure the device"
-    echo "  • Docker images will be pulled (2-4 minutes)"
-    echo "  • Containers will be started automatically"
-    echo ""
-    echo -e "${BLUE}Monitor progress:${NC}"
-    echo "  • Run: /usr/local/bin/alm-setup-progress"
-    echo "  • Or:  journalctl -u puppet -f"
-    echo ""
+	echo ""
+	log_success "Factory reset complete!"
+	echo ""
+	echo -e "${CYAN}What's happening now:${NC}"
+	echo "  • Puppet agent is running and will configure the device"
+	echo "  • Docker images will be pulled (2-4 minutes)"
+	echo "  • Containers will be started automatically"
+	echo ""
+	echo -e "${BLUE}Monitor progress:${NC}"
+	echo "  • Run: /usr/local/bin/alm-setup-progress"
+	echo "  • Or:  journalctl -u puppet -f"
+	echo ""
 }
 
 #
@@ -640,8 +640,8 @@ EOF
 # Update puppet.conf from repository
 #
 cmd_puppet_config() {
-    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
-        cat <<EOF
+	if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+		cat <<EOF
 Usage: alm puppet-config
 
 Update puppet.conf from the alm-config repository.
@@ -659,61 +659,61 @@ Requires: sudo privileges
 Examples:
   alm puppet-config
 EOF
-        return 0
-    fi
+		return 0
+	fi
 
-    log_info "Updating puppet.conf from repository..."
+	log_info "Updating puppet.conf from repository..."
 
-    # PRIORITY 1: Extract certname from SSL certificate filename (most authoritative)
-    local certname=""
-    local ssl_cert_dir="/etc/puppetlabs/puppet/ssl/certs"
-    if [[ -d "$ssl_cert_dir" ]]; then
-        local node_cert=""
-        for cert_file in "$ssl_cert_dir"/*.pem; do
-            if [[ -f "$cert_file" ]] && [[ "$(basename "$cert_file")" != "ca.pem" ]]; then
-                node_cert="$cert_file"
-                break
-            fi
-        done
-        if [[ -n "$node_cert" ]]; then
-            certname=$(basename "$node_cert" .pem)
-            log_info "Found certname from SSL cert: $certname"
-        fi
-    fi
+	# PRIORITY 1: Extract certname from SSL certificate filename (most authoritative)
+	local certname=""
+	local ssl_cert_dir="/etc/puppetlabs/puppet/ssl/certs"
+	if [[ -d "$ssl_cert_dir" ]]; then
+		local node_cert=""
+		for cert_file in "$ssl_cert_dir"/*.pem; do
+			if [[ -f "$cert_file" ]] && [[ "$(basename "$cert_file")" != "ca.pem" ]]; then
+				node_cert="$cert_file"
+				break
+			fi
+		done
+		if [[ -n "$node_cert" ]]; then
+			certname=$(basename "$node_cert" .pem)
+			log_info "Found certname from SSL cert: $certname"
+		fi
+	fi
 
-    # PRIORITY 2: Use system hostname
-    if [[ -z "$certname" ]]; then
-        certname=$(hostname)
-        log_info "Using system hostname: $certname"
-    fi
+	# PRIORITY 2: Use system hostname
+	if [[ -z "$certname" ]]; then
+		certname=$(hostname)
+		log_info "Using system hostname: $certname"
+	fi
 
-    # Validate certname format: <env>-<type>-<secret>-<serial>
-    if ! echo "$certname" | grep -qE "^(prod|stg|dev)-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+$"; then
-        log_error "Certname '$certname' doesn't match required format: <env>-<type>-<secret>-<serial>"
-        log_error "Example: prod-rpi4-c7368910b6-14b52e5c"
-        log_error "Run configure_puppet_agent.sh to fix hostname, or check /etc/strealer/autosign_secret"
-        return 1
-    fi
+	# Validate certname format: <env>-<type>-<secret>-<serial>
+	if ! echo "$certname" | grep -qE "^(prod|stg|dev)-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+$"; then
+		log_error "Certname '$certname' doesn't match required format: <env>-<type>-<secret>-<serial>"
+		log_error "Example: prod-rpi4-c7368910b6-14b52e5c"
+		log_error "Run configure_puppet_agent.sh to fix hostname, or check /etc/strealer/autosign_secret"
+		return 1
+	fi
 
-    # Download puppet.conf template and substitute certname
-    local config_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/puppet.conf"
-    sudo mkdir -p /etc/puppetlabs/puppet
-    if curl -fsSL "$config_url" | sed "s/%%HOSTNAME%%/$certname/g" | sudo tee /etc/puppetlabs/puppet/puppet.conf > /dev/null; then
-        log_success "puppet.conf updated with certname: $certname"
-    else
-        log_error "Failed to download puppet.conf template"
-        return 1
-    fi
+	# Download puppet.conf template and substitute certname
+	local config_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/puppet.conf"
+	sudo mkdir -p /etc/puppetlabs/puppet
+	if curl -fsSL "$config_url" | sed "s/%%HOSTNAME%%/$certname/g" | sudo tee /etc/puppetlabs/puppet/puppet.conf >/dev/null; then
+		log_success "puppet.conf updated with certname: $certname"
+	else
+		log_error "Failed to download puppet.conf template"
+		return 1
+	fi
 
-    echo ""
-    read -r -p "Restart Puppet agent now? [y/N]: " response
-    if [[ "$response" =~ ^[Yy]$ ]]; then
-        log_info "Restarting Puppet agent..."
-        sudo systemctl restart puppet
-        log_success "Puppet agent restarted"
-    else
-        log_info "Puppet agent not restarted. Run 'sudo systemctl restart puppet' to apply changes."
-    fi
+	echo ""
+	read -r -p "Restart Puppet agent now? [y/N]: " response
+	if [[ "$response" =~ ^[Yy]$ ]]; then
+		log_info "Restarting Puppet agent..."
+		sudo systemctl restart puppet
+		log_success "Puppet agent restarted"
+	else
+		log_info "Puppet agent not restarted. Run 'sudo systemctl restart puppet' to apply changes."
+	fi
 }
 
 #
@@ -721,8 +721,8 @@ EOF
 # Update the alm CLI tool from repository
 #
 cmd_update() {
-    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
-        cat <<EOF
+	if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+		cat <<EOF
 Usage: alm update
 
 Update the alm CLI tool from the alm-config repository.
@@ -735,35 +735,35 @@ Requires: sudo privileges
 Examples:
   alm update
 EOF
-        return 0
-    fi
+		return 0
+	fi
 
-    log_info "Updating alm CLI from repository..."
+	log_info "Updating alm CLI from repository..."
 
-    local alm_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/alm"
-    local alm_path="/opt/alm/bin/alm"
-    local tmp_path="/tmp/alm.new"
+	local alm_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/alm"
+	local alm_path="/opt/alm/bin/alm"
+	local tmp_path="/tmp/alm.new"
 
-    # Download to temp location first
-    if ! curl -fsSL -o "$tmp_path" "$alm_url"; then
-        log_error "Failed to download alm CLI"
-        rm -f "$tmp_path"
-        return 1
-    fi
+	# Download to temp location first
+	if ! curl -fsSL -o "$tmp_path" "$alm_url"; then
+		log_error "Failed to download alm CLI"
+		rm -f "$tmp_path"
+		return 1
+	fi
 
-    # Verify it's a valid bash script
-    if ! head -1 "$tmp_path" | grep -q "^#!/bin/bash"; then
-        log_error "Downloaded file doesn't appear to be a valid bash script"
-        rm -f "$tmp_path"
-        return 1
-    fi
+	# Verify it's a valid bash script
+	if ! head -1 "$tmp_path" | grep -q "^#!/bin/bash"; then
+		log_error "Downloaded file doesn't appear to be a valid bash script"
+		rm -f "$tmp_path"
+		return 1
+	fi
 
-    # Install the new version
-    sudo mv "$tmp_path" "$alm_path"
-    sudo chmod +x "$alm_path"
+	# Install the new version
+	sudo mv "$tmp_path" "$alm_path"
+	sudo chmod +x "$alm_path"
 
-    log_success "alm CLI updated successfully!"
-    log_info "Run 'alm help' to see available commands"
+	log_success "alm CLI updated successfully!"
+	log_info "Run 'alm help' to see available commands"
 }
 
 #
@@ -771,7 +771,7 @@ EOF
 # Show usage information
 #
 cmd_help() {
-    cat <<EOF
+	cat <<EOF
 ${CYAN}ALM - Autonomous Local Manager CLI${NC}
 
 Device management tool for Strealer edge computing system.
@@ -835,8 +835,8 @@ EOF
 # Monitor Docker image pull progress
 #
 cmd_pull() {
-    if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
-        cat <<EOF
+	if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+		cat <<EOF
 Usage: alm pull [options]
 
 Monitor Docker image pull progress in real-time.
@@ -863,118 +863,118 @@ Log Location:
 Note: Image pulls happen automatically via Puppet. This command only
 monitors the progress - it does not trigger new pulls.
 EOF
-        return 0
-    fi
+		return 0
+	fi
 
-    local log_file="/var/log/alm/docker-pull.log"
-    local follow=false
-    local lines=50
+	local log_file="/var/log/alm/docker-pull.log"
+	local follow=false
+	local lines=50
 
-    # Parse options
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -f|--follow)
-                follow=true
-                shift
-                ;;
-            -n|--lines)
-                if [[ -n "${2:-}" ]] && [[ "$2" =~ ^[0-9]+$ ]]; then
-                    lines=$2
-                    shift 2
-                else
-                    log_error "Option -n requires a numeric argument"
-                    return 1
-                fi
-                ;;
-            *)
-                log_error "Unknown option: $1"
-                echo "Run 'alm pull --help' for usage information"
-                return 1
-                ;;
-        esac
-    done
+	# Parse options
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		-f | --follow)
+			follow=true
+			shift
+			;;
+		-n | --lines)
+			if [[ -n "${2:-}" ]] && [[ "$2" =~ ^[0-9]+$ ]]; then
+				lines=$2
+				shift 2
+			else
+				log_error "Option -n requires a numeric argument"
+				return 1
+			fi
+			;;
+		*)
+			log_error "Unknown option: $1"
+			echo "Run 'alm pull --help' for usage information"
+			return 1
+			;;
+		esac
+	done
 
-    echo ""
-    log_info "Docker Image Pull Progress Monitor"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
+	echo ""
+	log_info "Docker Image Pull Progress Monitor"
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+	echo ""
 
-    # Check if log file exists
-    if [[ ! -f "$log_file" ]]; then
-        log_warning "Log file not found: $log_file"
-        echo ""
-        log_info "The log file will be created when Puppet runs the next image pull."
-        log_info "Puppet runs automatically every 30 minutes to check for updates."
-        echo ""
-        log_info "You can also check Puppet logs for pull activity:"
-        echo "  sudo journalctl -u puppet -f | grep docker-pull"
-        return 0
-    fi
+	# Check if log file exists
+	if [[ ! -f "$log_file" ]]; then
+		log_warning "Log file not found: $log_file"
+		echo ""
+		log_info "The log file will be created when Puppet runs the next image pull."
+		log_info "Puppet runs automatically every 30 minutes to check for updates."
+		echo ""
+		log_info "You can also check Puppet logs for pull activity:"
+		echo "  sudo journalctl -u puppet -f | grep docker-pull"
+		return 0
+	fi
 
-    if [[ "$follow" == true ]]; then
-        log_info "Following pull progress (press Ctrl+C to stop)..."
-        echo ""
-        tail -f "$log_file"
-    else
-        log_info "Showing last $lines lines from pull log..."
-        echo ""
-        tail -n "$lines" "$log_file"
-        echo ""
-        log_info "Use 'alm pull -f' to follow real-time progress"
-    fi
+	if [[ "$follow" == true ]]; then
+		log_info "Following pull progress (press Ctrl+C to stop)..."
+		echo ""
+		tail -f "$log_file"
+	else
+		log_info "Showing last $lines lines from pull log..."
+		echo ""
+		tail -n "$lines" "$log_file"
+		echo ""
+		log_info "Use 'alm pull -f' to follow real-time progress"
+	fi
 }
 
 #
 # Main command dispatcher
 #
 main() {
-    # Check if no arguments provided
-    if [[ $# -eq 0 ]]; then
-        cmd_help
-        return 0
-    fi
+	# Check if no arguments provided
+	if [[ $# -eq 0 ]]; then
+		cmd_help
+		return 0
+	fi
 
-    local command="$1"
-    shift
+	local command="$1"
+	shift
 
-    case "$command" in
-        status)
-            cmd_status "$@"
-            ;;
-        logs)
-            cmd_logs "$@"
-            ;;
-        pull)
-            cmd_pull "$@"
-            ;;
-        restart)
-            cmd_restart "$@"
-            ;;
-        reset)
-            cmd_reset "$@"
-            ;;
-        factory-reset)
-            cmd_factory_reset "$@"
-            ;;
-        puppet-config)
-            cmd_puppet_config "$@"
-            ;;
-        update)
-            cmd_update "$@"
-            ;;
-        help|--help|-h)
-            cmd_help
-            ;;
-        *)
-            log_error "Unknown command: $command"
-            echo ""
-            echo "Run 'alm help' to see available commands"
-            return 1
-            ;;
-    esac
+	case "$command" in
+	status)
+		cmd_status "$@"
+		;;
+	logs)
+		cmd_logs "$@"
+		;;
+	pull)
+		cmd_pull "$@"
+		;;
+	restart)
+		cmd_restart "$@"
+		;;
+	reset)
+		cmd_reset "$@"
+		;;
+	factory-reset)
+		cmd_factory_reset "$@"
+		;;
+	puppet-config)
+		cmd_puppet_config "$@"
+		;;
+	update)
+		cmd_update "$@"
+		;;
+	help | --help | -h)
+		cmd_help
+		;;
+	*)
+		log_error "Unknown command: $command"
+		echo ""
+		echo "Run 'alm help' to see available commands"
+		return 1
+		;;
+	esac
 }
 
 # Execute main function if script is run directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
+	main "$@"
 fi
