@@ -321,30 +321,31 @@ detect_alm_environment() {
 # - **Model Classification** - Detects specific RPi models (Pi 4, Pi 5, Zero W, etc.)
 # - **Vendor Recognition** - Identifies AMD64 system manufacturers (Dell, HP, Lenovo, etc.)
 #
-# HOSTNAME FORMAT: <env>-<type>-<secret>-<serial>
+# HOSTNAME FORMAT: <env>-<type>-<secret>-<serial>-<epoch>
 # The secret must match Puppet server's autosign.conf pattern.
 # Secret is read from /etc/strealer/autosign_secret (set during provisioning).
+# Epoch timestamp ensures unique certname on every registration (no cert conflicts).
 #
 # **Staging Raspberry Pi Devices:**
-# - stg-rpi4-<secret>-12345678 (Pi 4 Model B, staging)
-# - stg-rpi5-<secret>-abcdef12 (Pi 5 Model B, staging)
+# - stg-rpi4-<secret>-12345678-1737049200 (Pi 4 Model B, staging)
+# - stg-rpi5-<secret>-abcdef12-1737049200 (Pi 5 Model B, staging)
 #
 # **Production Raspberry Pi Devices:**
-# - prod-rpi4-<secret>-12345678 (Pi 4 Model B, production)
-# - prod-rpi5-<secret>-abcdef12 (Pi 5 Model B, production)
+# - prod-rpi4-<secret>-12345678-1737049200 (Pi 4 Model B, production)
+# - prod-rpi5-<secret>-abcdef12-1737049200 (Pi 5 Model B, production)
 #
 # **AMD64 Servers:**
-# - stg-amd-<secret>-9a8b7c6d (staging)
-# - prod-amd-<secret>-9a8b7c6d (production)
+# - stg-amd-<secret>-9a8b7c6d-1737049200 (staging)
+# - prod-amd-<secret>-9a8b7c6d-1737049200 (production)
 #
 # **Development/Generic Systems:**
-# - stg-dev-<secret>-4f5e6d7c or prod-dev-<secret>-4f5e6d7c
+# - stg-dev-<secret>-4f5e6d7c-1737049200 or prod-dev-<secret>-4f5e6d7c-1737049200
 #
 # WHY HARDWARE-BASED HOSTNAMES:
 # - **Puppet Identification** - Each device gets unique certificate/configuration
 # - **Environment Classification** - Puppet uses hostname prefix to determine environment
 # - **Infrastructure Tracking** - Easy identification in monitoring and logs
-# - **Deployment Consistency** - Same device always gets same base hostname
+# - **Unique Per Registration** - Epoch timestamp suffix ensures no cert conflicts on re-registration
 # ============================================================================
 generate_hostname() {
 	local rpi_serial amd_uuid host_id rpi_model final_hostname persistent_uuid uuid_path env_prefix
@@ -416,8 +417,11 @@ generate_hostname() {
 		host_id="${env_prefix}-dev-${autosign_secret}-${persistent_uuid: -8}"
 	fi
 
-	# No timestamp - cleaner hostnames
-	final_hostname="${host_id}"
+	# Append epoch timestamp to ensure unique certname on every registration
+	# This eliminates Puppet certificate conflicts during factory-reset/env-switch
+	local epoch
+	epoch=$(date +%s)
+	final_hostname="${host_id}-${epoch}"
 	echo "$final_hostname"
 }
 

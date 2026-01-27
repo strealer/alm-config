@@ -701,10 +701,10 @@ EOF
 		log_info "Using system hostname: $certname"
 	fi
 
-	# Validate certname format: <env>-<type>-<secret>-<serial>
-	if ! echo "$certname" | grep -qE "^(prod|stg|dev)-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+$"; then
-		log_error "Certname '$certname' doesn't match required format: <env>-<type>-<secret>-<serial>"
-		log_error "Example: prod-rpi4-c7368910b6-14b52e5c"
+	# Validate certname format: <env>-<type>-<secret>-<serial>[-<epoch>]
+	if ! echo "$certname" | grep -qE "^(prod|stg|dev)-[a-zA-Z0-9]+-[a-zA-Z0-9]+-[a-zA-Z0-9]+(-[0-9]+)?$"; then
+		log_error "Certname '$certname' doesn't match required format: <env>-<type>-<secret>-<serial>[-<epoch>]"
+		log_error "Example: prod-rpi4-c7368910b6-14b52e5c-1737049200"
 		log_error "Run configure_puppet_agent.sh to fix hostname, or check /etc/strealer/autosign_secret"
 		return 1
 	fi
