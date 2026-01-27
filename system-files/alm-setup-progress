@@ -57,11 +57,13 @@ DEVICE_SERIAL=""
 get_device_serial() {
     local serial=""
 
-    # Try to extract from hostname (e.g., prod-rpi4-14b52e5c -> 14b52e5c)
-    if [[ "$DEVICE_HOSTNAME" =~ -([a-f0-9]{8})$ ]]; then
+    # Extract serial from hostname (format: <env>-<type>-<secret>-<serial>-<epoch>)
+    # Serial is the 4th field; epoch timestamp is the 5th (optional)
+    if [[ "$DEVICE_HOSTNAME" =~ -([a-f0-9]{8})-[0-9]+$ ]]; then
+        # Current format with epoch timestamp (e.g., prod-rpi4-c7368910b6-14b52e5c-1737049200)
         serial="${BASH_REMATCH[1]}"
-    elif [[ "$DEVICE_HOSTNAME" =~ -([a-f0-9]{8})-[0-9]+$ ]]; then
-        # Legacy format with timestamp
+    elif [[ "$DEVICE_HOSTNAME" =~ -([a-f0-9]{8})$ ]]; then
+        # Legacy format without timestamp (e.g., prod-rpi4-c7368910b6-14b52e5c)
         serial="${BASH_REMATCH[1]}"
     fi
 
@@ -374,7 +376,7 @@ show_error_info() {
                 echo -e "  ${CYAN}Auto-fix:${NC} The server will clean the old cert automatically."
                 echo ""
                 echo -e "  ${YELLOW}If this persists, check the hostname format:${NC}"
-                echo "    Format: <env>-<type>-<secret>-<serial>"
+                echo "    Format: <env>-<type>-<secret>-<serial>-<epoch>"
                 echo "    Example: prod-rpi4-<secret>-${DEVICE_SERIAL:-<serial>}"
                 echo "    Contact admin for the correct autosign secret."
                 ;;

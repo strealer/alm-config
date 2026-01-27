@@ -30,7 +30,9 @@ Behavior:
 
 1. Validates disk space (>20 GB total, >6 GB cache).
 2. Installs Puppet 8 if missing.
-3. Generates the hostname with environment prefix (patterns: `prod-rpi*`, `stg-rpi*`, `prod-amd-*`, `stg-amd-*`, `dev-*`).
+3. Generates the hostname with environment prefix and epoch timestamp
+   (format: `<env>-<type>-<secret>-<serial>-<epoch>`, e.g. `prod-rpi4-c7368910b6-14b52e5c-1737049200`).
+   The epoch ensures unique certnames, eliminating Puppet certificate conflicts on re-registration.
 4. Installs `configure_puppet_agent.service` and starts the agent.
 5. Leaves `/opt/configure_puppet_agent.sh` on disk so Puppet can re-run it if
    needed.

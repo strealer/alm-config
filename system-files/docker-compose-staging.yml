@@ -95,5 +95,5 @@ volumes:
 # - Devices registered here use a SEPARATE database from production
 # - Only TEST content routes are available (/media-test, /player-test, /renderer-test)
 # - Cannot switch to PRODUCTION/PRELIVE - different database
-# - Use hostname pattern: stg-rpi4-<secret>-<serial> or stg-amd-<secret>-<name>
+# - Use hostname pattern: stg-rpi4-<secret>-<serial>-<epoch> or stg-amd-<secret>-<name>-<epoch>
 # ============================================================================
