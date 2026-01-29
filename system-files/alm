@@ -803,6 +803,7 @@ ${RED}⚠️  WARNING: Changing environment will:${NC}
   3. Regenerate hostname with new prefix (stg-/prod-)
   4. Re-register device with Puppet server
   5. Re-register device with backend API
+  6. Update Tailscale VPN tag to match new environment
 
 ${BLUE}Environments:${NC}
   ${GREEN}staging${NC}     - Uses TEST content, fapi-test.strealer.io
@@ -935,6 +936,22 @@ EOF
 		return 1
 	fi
 
+	# Update Tailscale tag to match new environment
+	if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
+		log_info "Updating Tailscale environment tag..."
+		local ts_authkey
+		if [ "$target_env" = "staging" ]; then
+			ts_authkey="tskey-auth-kXHvZctnqA11CNTRL-Eiq5PZZzpdAxgxLJ4UrrdAFqjHjBicoRR"
+		else
+			ts_authkey="tskey-auth-kCQFsrxwRS11CNTRL-QP1NqoN5tRB4kakV6LSpRB674U2gpw8a"
+		fi
+		if tailscale up --authkey="$ts_authkey" --accept-dns=false --ssh; then
+			log_success "Tailscale tag updated to $target_env"
+		else
+			log_warning "Tailscale tag update failed (will be fixed by Puppet)"
+		fi
+	fi
+
 	echo ""
 	log_success "Environment changed to ${GREEN}${target_env}${NC}"
 	echo ""
@@ -944,6 +961,59 @@ EOF
 	echo "  - Puppet will configure the device (wait ~5 min)"
 	echo "  - Init container will re-register with backend"
 	echo "  - Check progress: alm logs init"
+}
+
+#
+# Command: alm tailscale
+# Show Tailscale VPN status
+#
+cmd_tailscale() {
+	if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+		cat <<EOF
+Usage: alm tailscale [status]
+
+Show Tailscale VPN status and connectivity information.
+
+Commands:
+  status    Show Tailscale connection status (default)
+
+Examples:
+  alm tailscale          # Show VPN status
+  alm tailscale status   # Same as above
+EOF
+		return 0
+	fi
+
+	echo ""
+	log_info "Tailscale VPN Status"
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+	if ! command -v tailscale >/dev/null 2>&1; then
+		log_error "Tailscale is not installed"
+		return 1
+	fi
+
+	if ! systemctl is-active --quiet tailscaled 2>/dev/null; then
+		log_warning "Tailscale daemon is not running"
+		echo "  Start with: sudo systemctl start tailscaled"
+		return 1
+	fi
+
+	# Show status
+	local ts_ip ts_hostname ts_status
+	if ts_status=$(tailscale status --json 2>/dev/null); then
+		ts_ip=$(echo "$ts_status" | grep -o '"TailscaleIPs":\["[^"]*"' | head -1 | cut -d'"' -f4)
+		ts_hostname=$(echo "$ts_status" | grep -o '"Self":{"ID":"[^"]*","PublicKey":"[^"]*","HostName":"[^"]*"' | grep -o '"HostName":"[^"]*"' | cut -d'"' -f4)
+		log_success "Connected to Tailscale"
+		echo ""
+		echo "  Tailscale IP:  ${ts_ip:-unknown}"
+		echo "  Hostname:      ${ts_hostname:-unknown}"
+		echo "  DNS Name:      ${ts_hostname:-unknown}.tail40714b.ts.net"
+	else
+		log_warning "Tailscale is not connected"
+		echo "  Run 'sudo tailscale up' to connect"
+	fi
+	echo ""
 }
 
 #
@@ -969,6 +1039,7 @@ ${BLUE}Commands:${NC}
   ${GREEN}puppet-config${NC}  Update puppet.conf from repository
   ${GREEN}update${NC}         Update the alm CLI tool from repository
   ${GREEN}environment${NC}    Show or change environment (staging/production)
+  ${GREEN}tailscale${NC}      Show Tailscale VPN status
   ${GREEN}help${NC}           Show this help message
 
 ${BLUE}Examples:${NC}
@@ -991,6 +1062,7 @@ ${BLUE}Get Help for Specific Commands:${NC}
   alm puppet-config --help
   alm update --help
   alm environment --help
+  alm tailscale --help
 
 ${BLUE}Automated Registration:${NC}
   • Device registration is FULLY AUTOMATED
@@ -1148,6 +1220,9 @@ main() {
 		;;
 	environment | env)
 		cmd_environment "$@"
+		;;
+	tailscale)
+		cmd_tailscale "$@"
 		;;
 	help | --help | -h)
 		cmd_help

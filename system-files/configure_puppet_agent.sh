@@ -591,6 +591,69 @@ validate_ssl_certificates() {
 	return 0
 }
 
+# ============================================================================
+# setup_tailscale()
+# ============================================================================
+#
+# WHAT THIS FUNCTION DOES:
+# - **Installs Tailscale** if not already present (for non-pi-gen devices like AMD servers)
+# - **Ensures tailscaled is running** via systemd
+# - **Selects auth key** based on detected ALM environment (staging/production)
+# - **Registers with Tailscale** using environment-specific auth key and tags
+# - **Disables accept-dns** to prevent Magic DNS from breaking hostname resolution
+#
+# AUTH KEYS:
+# - 90-day reusable, preauthorized keys with environment-specific tags
+# - Tagged nodes never expire after initial registration
+# - Production: tag:prod-edge, Staging: tag:staging-edge
+#
+# FAILURE HANDLING:
+# - Non-fatal: device continues to work without VPN if registration fails
+# - Puppet will retry on subsequent runs (self-healing)
+# ============================================================================
+setup_tailscale() {
+	echo "Configuring Tailscale VPN..."
+
+	# Install tailscale if not present (for non-pi-gen devices like AMD servers)
+	if ! command -v tailscale >/dev/null 2>&1; then
+		echo "Tailscale not found. Installing..."
+		curl -fsSL https://tailscale.com/install.sh | sh
+	fi
+
+	# Ensure tailscaled is running
+	if ! systemctl is-active --quiet tailscaled; then
+		systemctl enable --now tailscaled
+	fi
+
+	# Select auth key based on environment
+	local alm_env
+	alm_env=$(detect_alm_environment)
+	local ts_authkey
+	if [ "$alm_env" = "staging" ]; then
+		ts_authkey="tskey-auth-kXHvZctnqA11CNTRL-Eiq5PZZzpdAxgxLJ4UrrdAFqjHjBicoRR"
+	else
+		ts_authkey="tskey-auth-kCQFsrxwRS11CNTRL-QP1NqoN5tRB4kakV6LSpRB674U2gpw8a"
+	fi
+
+	# Check if already connected to tailnet
+	if tailscale status >/dev/null 2>&1; then
+		echo "Tailscale already connected."
+		# Ensure DNS override is disabled
+		tailscale set --accept-dns=false
+		return 0
+	fi
+
+	# Register with Tailscale
+	echo "Registering with Tailscale (environment: $alm_env)..."
+	if tailscale up --authkey="$ts_authkey" --accept-dns=false --ssh; then
+		echo "Tailscale connected successfully."
+		tailscale status
+	else
+		echo "Warning: Tailscale registration failed. Will retry on next Puppet run."
+		return 0 # Non-fatal - device still works without VPN
+	fi
+}
+
 # Create flag file to indicate successful completion
 create_flag_file() {
 	echo "$(date): Puppet configuration completed successfully" >"$FLAG_FILE"
@@ -640,6 +703,11 @@ main() {
 	ensure_puppet_service || {
 		echo "Error starting Puppet service. Exiting."
 		exit 1
+	}
+
+	echo "Setting up Tailscale VPN..."
+	setup_tailscale || {
+		echo "Warning: Tailscale setup failed (non-fatal). Continuing..."
 	}
 
 	# Create flag file to prevent future runs
