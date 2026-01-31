@@ -638,6 +638,19 @@ setup_tailscale() {
 	# Check if already connected to tailnet
 	if tailscale status >/dev/null 2>&1; then
 		echo "Tailscale already connected."
+
+		# Check if OS hostname changed (e.g. after factory-reset with new epoch)
+		local ts_hostname os_hostname
+		ts_hostname=$(tailscale status --json 2>/dev/null | grep -o '"HostName":"[^"]*"' | head -1 | cut -d'"' -f4)
+		os_hostname=$(hostname)
+		if [[ -n "$ts_hostname" && "$ts_hostname" != "$os_hostname" ]]; then
+			echo "Hostname changed: Tailscale='$ts_hostname' OS='$os_hostname'. Restarting tailscaled..."
+			systemctl restart tailscaled
+			sleep 3
+			tailscale up --authkey="$ts_authkey" --accept-dns=false --ssh || true
+			echo "Tailscale updated with new hostname."
+		fi
+
 		# Ensure DNS override is disabled
 		tailscale set --accept-dns=false
 		return 0
