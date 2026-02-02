@@ -89,8 +89,8 @@ services:
   #     - /sys:/host/sys:ro
   #     - /:/host/root:ro
   #   environment:
-  #     - PROMETHEUS_ENDPOINT=http://104.155.91.159:9090/api/v1/write
-  #     - LOKI_ENDPOINT=http://104.155.91.159:3100
+  #     - PROMETHEUS_ENDPOINT=http://85.222.235.47:9090/api/v1/write
+  #     - LOKI_ENDPOINT=http://85.222.235.47:3100
   #     - VECTOR_CONFIG=/etc/vector/vector.yaml
   #   restart: unless-stopped
   #   depends_on:
