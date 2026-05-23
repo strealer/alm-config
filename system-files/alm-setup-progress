@@ -43,6 +43,9 @@
 
 set -euo pipefail
 
+# Ensure core binaries are always reachable even with a minimal login environment.
+export PATH="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
+
 # State directory and files
 STATE_DIR="/var/lib/alm/state"
 SETUP_COMPLETE="${STATE_DIR}/10_service_responding"

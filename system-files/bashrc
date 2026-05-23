@@ -74,6 +74,13 @@ fi
 [[ $- != *i* ]] && return
 
 # 1. Paths
+# Ensure baseline system paths exist even if PATH is empty/minimal during login.
+DEFAULT_PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+if [[ -z "${PATH:-}" ]]; then
+  export PATH="$DEFAULT_PATH"
+elif [[ ":$PATH:" != *":/usr/bin:"* ]] || [[ ":$PATH:" != *":/bin:"* ]]; then
+  export PATH="$PATH:$DEFAULT_PATH"
+fi
 export PATH="$HOME/.local/bin:/opt/alm/bin:$PATH"
 
 # 2. Better history
