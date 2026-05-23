@@ -42,6 +42,7 @@ readonly PUPPET_MASTER="puppet.strealer.io"
 readonly PUPPET_CONF_FILE="/etc/puppetlabs/puppet/puppet.conf"
 readonly ALM_CONFIG_REPO_URL="https://raw.githubusercontent.com/strealer/alm-config/main/system-files"
 readonly AUTOSIGN_SECRET_FILE="/etc/strealer/autosign_secret"
+readonly TAILSCALE_AUTHKEYS_FILE="/etc/strealer/tailscale-authkeys.conf"
 
 # Cached hostname (computed once, used multiple times)
 CACHED_HOSTNAME=""
@@ -625,14 +626,22 @@ setup_tailscale() {
 		systemctl enable --now tailscaled
 	fi
 
-	# Select auth key based on environment
+	# Select auth key candidates based on environment and attempt in order.
+	# Supports proactive rotation by providing multiple keys (comma-separated).
 	local alm_env
 	alm_env=$(detect_alm_environment)
-	local ts_authkey
-	if [ "$alm_env" = "staging" ]; then
-		ts_authkey="tskey-auth-kXHvZctnqA11CNTRL-Eiq5PZZzpdAxgxLJ4UrrdAFqjHjBicoRR"
-	else
-		ts_authkey="tskey-auth-kCQFsrxwRS11CNTRL-QP1NqoN5tRB4kakV6LSpRB674U2gpw8a"
+	local key_list=""
+	if [[ -f "$TAILSCALE_AUTHKEYS_FILE" ]]; then
+		if [[ "$alm_env" == "staging" ]]; then
+			key_list=$(grep -E '^STAGING_KEYS=' "$TAILSCALE_AUTHKEYS_FILE" 2>/dev/null | sed 's/^STAGING_KEYS=//' | tr -d '[:space:]')
+		else
+			key_list=$(grep -E '^PRODUCTION_KEYS=' "$TAILSCALE_AUTHKEYS_FILE" 2>/dev/null | sed 's/^PRODUCTION_KEYS=//' | tr -d '[:space:]')
+		fi
+	fi
+
+	if [[ -z "$key_list" ]]; then
+		echo "Warning: Tailscale key file missing/empty at $TAILSCALE_AUTHKEYS_FILE. Skipping direct registration; Puppet will retry."
+		return 0
 	fi
 
 	# Check if already connected to tailnet
@@ -647,7 +656,7 @@ setup_tailscale() {
 			echo "Hostname changed: Tailscale='$ts_hostname' OS='$os_hostname'. Restarting tailscaled..."
 			systemctl restart tailscaled
 			sleep 3
-			tailscale up --authkey="$ts_authkey" --accept-dns=false --ssh || true
+			tailscale up --accept-dns=false --ssh || true
 			echo "Tailscale updated with new hostname."
 		fi
 
@@ -658,13 +667,20 @@ setup_tailscale() {
 
 	# Register with Tailscale
 	echo "Registering with Tailscale (environment: $alm_env)..."
-	if tailscale up --authkey="$ts_authkey" --accept-dns=false --ssh; then
-		echo "Tailscale connected successfully."
-		tailscale status
-	else
-		echo "Warning: Tailscale registration failed. Will retry on next Puppet run."
-		return 0 # Non-fatal - device still works without VPN
-	fi
+	local ts_authkey
+	IFS=',' read -r -a auth_keys <<<"$key_list"
+	for ts_authkey in "${auth_keys[@]}"; do
+		[[ -z "$ts_authkey" ]] && continue
+		if tailscale up --authkey="$ts_authkey" --accept-dns=false --ssh; then
+			echo "Tailscale connected successfully."
+			tailscale status
+			return 0
+		fi
+		echo "Auth key failed, trying next candidate..."
+	done
+
+	echo "Warning: Tailscale registration failed with all configured keys. Will retry on next Puppet run."
+	return 0 # Non-fatal - device still works without VPN
 }
 
 # Create flag file to indicate successful completion

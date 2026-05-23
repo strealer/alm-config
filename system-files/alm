@@ -24,6 +24,7 @@ fi
 # Puppet command - always use full path since /opt/puppetlabs/bin may not be in PATH
 readonly PUPPET_BIN="/opt/puppetlabs/bin/puppet"
 readonly PUPPETSERVER_BIN="/opt/puppetlabs/bin/puppetserver"
+readonly TAILSCALE_AUTHKEYS_FILE="/etc/strealer/tailscale-authkeys.conf"
 
 # Colors for output (use $'...' syntax for escape sequence interpretation)
 readonly RED=$'\033[0;31m'
@@ -48,6 +49,20 @@ log_warning() {
 
 log_error() {
 	echo -e "${RED}❌${NC} $*" >&2
+}
+
+get_tailscale_key_list() {
+	local env_name="$1"
+	local key_list=""
+	if [[ -f "$TAILSCALE_AUTHKEYS_FILE" ]]; then
+		if [[ "$env_name" == "staging" ]]; then
+			key_list=$(grep -E '^STAGING_KEYS=' "$TAILSCALE_AUTHKEYS_FILE" 2>/dev/null | sed 's/^STAGING_KEYS=//' | tr -d '[:space:]')
+		else
+			key_list=$(grep -E '^PRODUCTION_KEYS=' "$TAILSCALE_AUTHKEYS_FILE" 2>/dev/null | sed 's/^PRODUCTION_KEYS=//' | tr -d '[:space:]')
+		fi
+	fi
+
+	echo "$key_list"
 }
 
 # Check if container is running via HTTP health check (no docker access needed)
@@ -939,13 +954,17 @@ EOF
 	# Update Tailscale tag to match new environment
 	if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then
 		log_info "Updating Tailscale environment tag..."
-		local ts_authkey
-		if [ "$target_env" = "staging" ]; then
-			ts_authkey="tskey-auth-kXHvZctnqA11CNTRL-Eiq5PZZzpdAxgxLJ4UrrdAFqjHjBicoRR"
-		else
-			ts_authkey="tskey-auth-kCQFsrxwRS11CNTRL-QP1NqoN5tRB4kakV6LSpRB674U2gpw8a"
-		fi
-		if tailscale up --authkey="$ts_authkey" --accept-dns=false --ssh; then
+		local ts_authkey key_list
+		key_list=$(get_tailscale_key_list "$target_env")
+		IFS=',' read -r -a auth_keys <<<"$key_list"
+		for ts_authkey in "${auth_keys[@]}"; do
+			[[ -z "$ts_authkey" ]] && continue
+			if tailscale up --authkey="$ts_authkey" --accept-dns=false --ssh; then
+				log_success "Tailscale tag updated to $target_env"
+				break
+			fi
+		done
+		if tailscale status >/dev/null 2>&1; then
 			log_success "Tailscale tag updated to $target_env"
 		else
 			log_warning "Tailscale tag update failed (will be fixed by Puppet)"
