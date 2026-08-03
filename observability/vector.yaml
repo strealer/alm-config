@@ -115,7 +115,7 @@ sources:
   # NEW: Monitor critical service health
   service_health:
     type: "exec"
-    command: ["/bin/sh", "-c", "echo '{\"docker\":\"'$(systemctl is-active docker)'\",\"puppet\":\"'$(systemctl is-active puppet)'\",\"vector\":\"'$(systemctl is-active vector)'\",\"strealer\":\"'$(systemctl is-active strealer-container)'\"}'"]
+    command: ["/bin/sh", "-c", "echo '{\"docker\":\"'$(systemctl is-active docker)'\",\"puppet\":\"'$(systemctl is-active puppet)'\",\"vector\":\"'$(systemctl is-active vector)'\",\"strealer\":\"'$(docker inspect --format='{{.State.Status}}' alm 2>/dev/null || echo inactive)'\"}'"]
     mode: "scheduled"
     scheduled:
       exec_interval_secs: 60 # Check every minute
