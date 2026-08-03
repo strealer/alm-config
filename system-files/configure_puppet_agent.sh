@@ -43,13 +43,16 @@ readonly PUPPET_CONF_FILE="/etc/puppetlabs/puppet/puppet.conf"
 readonly ALM_CONFIG_REPO_URL="https://raw.githubusercontent.com/strealer/alm-config/main/system-files"
 readonly AUTOSIGN_SECRET_FILE="/etc/strealer/autosign_secret"
 readonly TAILSCALE_AUTHKEYS_FILE="/etc/strealer/tailscale-authkeys.conf"
+readonly PUPPET_CERTNAME_FILE="${PUPPET_CERTNAME_FILE:-/etc/strealer/puppet-certname}"
 
-# Cached hostname (computed once, used multiple times)
-CACHED_HOSTNAME=""
+# The OS hostname is the stable device identity used by registration, Tailscale,
+# logs, and metrics. Puppet gets a separate, persisted certificate identity.
+CACHED_DEVICE_HOSTNAME=""
 
 # Support FORCE flag with default value (for set -u compatibility)
 : "${FORCE:=0}"
 : "${ALM_ENVIRONMENT:=}"
+: "${ROTATE_CERTIFICATE:=0}"
 
 # ============================================================================
 # EARLY CHECKS
@@ -102,29 +105,36 @@ if [[ -d /etc/puppetlabs/puppet/ssl ]]; then
 		cleanup_reason="Puppet service SSL errors detected"
 	fi
 
-	# Check 2: Certificate exists but certname doesn't match expected hostname
-	# This catches factory reset / environment switch scenarios
-	if [[ -f /etc/puppetlabs/puppet/ssl/certs/*.pem ]] 2>/dev/null; then
-		# Extract certname from existing certificate
-		existing_cert=$(ls /etc/puppetlabs/puppet/ssl/certs/*.pem 2>/dev/null | grep -v ca.pem | head -1)
-		if [[ -n "$existing_cert" ]]; then
-			existing_certname=$(basename "$existing_cert" .pem)
-			# We can't compute expected hostname yet (functions not defined), but we can
-			# check if the cert matches what's in puppet.conf
-			if [[ -f "$PUPPET_CONF_FILE" ]]; then
-				configured_certname=$(grep -E "^\s*certname\s*=" "$PUPPET_CONF_FILE" 2>/dev/null | sed 's/.*=\s*//' | tr -d ' ')
-				if [[ -n "$configured_certname" ]] && [[ "$existing_certname" != "$configured_certname" ]]; then
-					needs_cleanup=true
-					cleanup_reason="Certificate certname mismatch: cert='$existing_certname', config='$configured_certname'"
-				fi
+	# Check 2: Certificate exists but puppet.conf points at a different identity.
+	# The certificate is authoritative: retain it and repair configuration instead
+	# of destroying a working key pair and creating another CA identity.
+	# Extract certname from an existing client certificate (excluding the CA).
+	existing_cert=$(find /etc/puppetlabs/puppet/ssl/certs -maxdepth 1 -type f -name '*.pem' ! -name ca.pem -print -quit 2>/dev/null || true)
+	if [[ -n "$existing_cert" ]]; then
+		existing_certname=$(basename "$existing_cert" .pem)
+		# Seed the persistent identity when upgrading devices issued by versions
+		# that only stored certname in puppet.conf/the certificate filename.
+		if [[ ! -s "$PUPPET_CERTNAME_FILE" ]] || [[ "$(tr -d '[:space:]' <"$PUPPET_CERTNAME_FILE")" != "$existing_certname" ]]; then
+			mkdir -p "$(dirname "$PUPPET_CERTNAME_FILE")"
+			printf '%s\n' "$existing_certname" >"${PUPPET_CERTNAME_FILE}.tmp"
+			mv "${PUPPET_CERTNAME_FILE}.tmp" "$PUPPET_CERTNAME_FILE"
+		fi
+		# We can't compute expected hostname yet (functions not defined), but we can
+		# check if the cert matches what's in puppet.conf
+		if [[ -f "$PUPPET_CONF_FILE" ]]; then
+			configured_certname=$(grep -E "^\s*certname\s*=" "$PUPPET_CONF_FILE" 2>/dev/null | sed 's/.*=\s*//' | tr -d ' ')
+			if [[ -n "$configured_certname" ]] && [[ "$existing_certname" != "$configured_certname" ]]; then
+				echo "Repairing Puppet identity mismatch: cert='$existing_certname', config='$configured_certname'"
+				rm -f "$FLAG_FILE" "$PUPPET_CONF_FILE"
 			fi
 		fi
 	fi
 
 	if [[ "$needs_cleanup" == "true" ]]; then
 		echo "Detected Puppet certificate issues: $cleanup_reason"
-		echo "Cleaning up SSL certificates and config for fresh start..."
+		echo "Rotating the damaged certificate identity..."
 		rm -rf "$FLAG_FILE" "$PUPPET_CONF_FILE" /etc/puppetlabs/puppet/ssl
+		rm -f "$PUPPET_CERTNAME_FILE"
 	fi
 fi
 
@@ -136,9 +146,17 @@ if [[ -f "$FLAG_FILE" ]] && [[ "$FORCE" != "1" ]]; then
 fi
 
 # If FORCE mode, clean up for fresh start
-if [[ "$FORCE" == "1" ]] && [[ -f "$FLAG_FILE" ]]; then
-	echo "FORCE mode enabled. Removing flag file and cleaning SSL certificates..."
+if [[ "$FORCE" == "1" ]]; then
+	echo "FORCE mode enabled. Re-running configuration with the existing identity..."
+	rm -f "$FLAG_FILE" "$PUPPET_CONF_FILE"
+fi
+
+# Certificate rotation is explicit. Normal retries must preserve the certname so
+# a transient download or service failure cannot create another device identity.
+if [[ "$ROTATE_CERTIFICATE" == "1" ]]; then
+	echo "Certificate rotation requested. Removing local Puppet credentials..."
 	rm -rf "$FLAG_FILE" "$PUPPET_CONF_FILE" /etc/puppetlabs/puppet/ssl
+	rm -f "$PUPPET_CERTNAME_FILE"
 fi
 
 ### Function Definitions
@@ -312,7 +330,7 @@ detect_alm_environment() {
 }
 
 # ============================================================================
-# generate_hostname()
+# generate_device_hostname()
 # ============================================================================
 #
 # WHAT THIS FUNCTION DOES:
@@ -322,34 +340,34 @@ detect_alm_environment() {
 # - **Model Classification** - Detects specific RPi models (Pi 4, Pi 5, Zero W, etc.)
 # - **Vendor Recognition** - Identifies AMD64 system manufacturers (Dell, HP, Lenovo, etc.)
 #
-# HOSTNAME FORMAT: <env>-<type>-<secret>-<serial>-<epoch>
+# HOSTNAME FORMAT: <env>-<type>-<secret>-<serial>
 # The secret must match Puppet server's autosign.conf pattern.
 # Secret is read from /etc/strealer/autosign_secret (set during provisioning).
-# Epoch timestamp ensures unique certname on every registration (no cert conflicts).
+# This identity is intentionally stable across retries, resets, and reflashes.
 #
 # **Staging Raspberry Pi Devices:**
-# - stg-rpi4-<secret>-12345678-1737049200 (Pi 4 Model B, staging)
-# - stg-rpi5-<secret>-abcdef12-1737049200 (Pi 5 Model B, staging)
+# - stg-rpi4-<secret>-12345678 (Pi 4 Model B, staging)
+# - stg-rpi5-<secret>-abcdef12 (Pi 5 Model B, staging)
 #
 # **Production Raspberry Pi Devices:**
-# - prod-rpi4-<secret>-12345678-1737049200 (Pi 4 Model B, production)
-# - prod-rpi5-<secret>-abcdef12-1737049200 (Pi 5 Model B, production)
+# - prod-rpi4-<secret>-12345678 (Pi 4 Model B, production)
+# - prod-rpi5-<secret>-abcdef12 (Pi 5 Model B, production)
 #
 # **AMD64 Servers:**
-# - stg-amd-<secret>-9a8b7c6d-1737049200 (staging)
-# - prod-amd-<secret>-9a8b7c6d-1737049200 (production)
+# - stg-amd-<secret>-9a8b7c6d (staging)
+# - prod-amd-<secret>-9a8b7c6d (production)
 #
 # **Development/Generic Systems:**
-# - stg-dev-<secret>-4f5e6d7c-1737049200 or prod-dev-<secret>-4f5e6d7c-1737049200
+# - stg-dev-<secret>-4f5e6d7c or prod-dev-<secret>-4f5e6d7c
 #
 # WHY HARDWARE-BASED HOSTNAMES:
-# - **Puppet Identification** - Each device gets unique certificate/configuration
+# - **Fleet Identification** - Registration and metrics converge on one device row
 # - **Environment Classification** - Puppet uses hostname prefix to determine environment
 # - **Infrastructure Tracking** - Easy identification in monitoring and logs
-# - **Unique Per Registration** - Epoch timestamp suffix ensures no cert conflicts on re-registration
+# - **Stable Fleet Identity** - Re-registration updates the same backend/metrics identity
 # ============================================================================
-generate_hostname() {
-	local rpi_serial amd_uuid host_id rpi_model final_hostname persistent_uuid uuid_path env_prefix
+generate_device_hostname() {
+	local rpi_serial amd_uuid host_id rpi_model persistent_uuid uuid_path env_prefix
 
 	# Autosign secret - must match pattern in Puppet server's autosign.conf
 	# Read from config file (set during provisioning via pi-gen or manual setup)
@@ -418,35 +436,51 @@ generate_hostname() {
 		host_id="${env_prefix}-dev-${autosign_secret}-${persistent_uuid: -8}"
 	fi
 
-	# Append epoch timestamp to ensure unique certname on every registration
-	# This eliminates Puppet certificate conflicts during factory-reset/env-switch
-	local epoch
-	epoch=$(date +%s)
-	final_hostname="${host_id}-${epoch}"
-	echo "$final_hostname"
+	echo "$host_id"
 }
 
 # ============================================================================
-# get_hostname()
+# get_device_hostname() / get_puppet_certname()
 # ============================================================================
-#
-# WHAT THIS FUNCTION DOES:
-# - Returns cached hostname if already computed
-# - Calls generate_hostname() only once and caches result
-# - Use this instead of generate_hostname() to avoid redundant computation
-# ============================================================================
-get_hostname() {
-	if [[ -z "$CACHED_HOSTNAME" ]]; then
-		CACHED_HOSTNAME=$(generate_hostname)
+get_device_hostname() {
+	if [[ -n "$CACHED_DEVICE_HOSTNAME" ]]; then
+		echo "$CACHED_DEVICE_HOSTNAME"
+		return 0
 	fi
-	echo "$CACHED_HOSTNAME"
+
+	CACHED_DEVICE_HOSTNAME=$(generate_device_hostname)
+	if [[ -z "$CACHED_DEVICE_HOSTNAME" ]]; then
+		echo "ERROR: Generated device hostname is empty" >&2
+		return 1
+	fi
+	echo "$CACHED_DEVICE_HOSTNAME"
+}
+
+get_puppet_certname() {
+	mkdir -p "$(dirname "$PUPPET_CERTNAME_FILE")"
+	if command -v flock >/dev/null 2>&1; then
+		exec 9>"${PUPPET_CERTNAME_FILE}.lock"
+		flock 9
+	fi
+
+	if [[ ! -s "$PUPPET_CERTNAME_FILE" ]]; then
+		local certname certname_tmp
+		# Nanoseconds keep rotations unique even when two resets occur in one second.
+		certname="$(get_device_hostname)-$(date +%s%N)"
+		certname_tmp="${PUPPET_CERTNAME_FILE}.$$"
+		umask 077
+		printf '%s\n' "$certname" >"$certname_tmp"
+		mv "$certname_tmp" "$PUPPET_CERTNAME_FILE"
+	fi
+
+	tr -d '[:space:]' <"$PUPPET_CERTNAME_FILE"
 }
 
 # apply_hostname
 # Purpose: Set the hostname persistently if not already set correctly
 apply_hostname() {
 	local desired_hostname current_hostname
-	desired_hostname=$(get_hostname)
+	desired_hostname=$(get_device_hostname)
 	# Try hostnamectl first, fall back to /etc/hostname, then to 'localhost'
 	current_hostname=$(hostnamectl --static 2>/dev/null || cat /etc/hostname 2>/dev/null | tr -d '[:space:]' || echo "localhost")
 
@@ -466,8 +500,8 @@ apply_hostname() {
 
 # Function to update puppet.conf
 update_puppet_conf() {
-	local HOSTNAME
-	HOSTNAME=$(get_hostname)
+	local puppet_certname
+	puppet_certname=$(get_puppet_certname)
 
 	# Ensure puppet service is stopped before making changes
 	if systemctl is-active --quiet puppet; then
@@ -485,8 +519,8 @@ update_puppet_conf() {
 	fi
 
 	# Replace the hostname placeholder and save to the correct location
-	echo "Configuring puppet.conf with hostname: $HOSTNAME"
-	sed "s/%%HOSTNAME%%/$HOSTNAME/g" /tmp/puppet.conf.template | tee "$PUPPET_CONF_FILE" >/dev/null
+	echo "Configuring puppet.conf with certname: $puppet_certname"
+	sed "s/%%HOSTNAME%%/$puppet_certname/g" /tmp/puppet.conf.template | tee "$PUPPET_CONF_FILE" >/dev/null
 
 	# Clean up temporary file
 	rm -f /tmp/puppet.conf.template
@@ -568,7 +602,7 @@ validate_ssl_certificates() {
 
 	# Find existing certificate (exclude CA cert)
 	local existing_cert
-	existing_cert=$(ls /etc/puppetlabs/puppet/ssl/certs/*.pem 2>/dev/null | grep -v ca.pem | head -1)
+	existing_cert=$(find /etc/puppetlabs/puppet/ssl/certs -maxdepth 1 -type f -name '*.pem' ! -name ca.pem -print -quit 2>/dev/null || true)
 	if [[ -z "$existing_cert" ]]; then
 		echo "No client certificate found, will be generated fresh"
 		return 0
@@ -648,7 +682,7 @@ setup_tailscale() {
 	if tailscale status >/dev/null 2>&1; then
 		echo "Tailscale already connected."
 
-		# Check if OS hostname changed (e.g. after factory-reset with new epoch)
+		# Check if OS hostname changed (for example, environment migration)
 		local ts_hostname os_hostname
 		ts_hostname=$(tailscale status --json 2>/dev/null | grep -o '"HostName":"[^"]*"' | head -1 | cut -d'"' -f4)
 		os_hostname=$(hostname)

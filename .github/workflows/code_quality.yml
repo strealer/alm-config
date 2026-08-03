@@ -1,0 +1,71 @@
+name: Configuration Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-quality:
+    name: Shell syntax, lint, formatting, and behavior
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install shell tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          go install mvdan.cc/sh/v3/cmd/shfmt@v3.12.0
+          sudo install "$(go env GOPATH)/bin/shfmt" /usr/local/bin/shfmt
+      - name: Validate shell scripts
+        run: |
+          scripts=(
+            system-files/configure_puppet_agent.sh
+            system-files/alm
+            system-files/alm-setup-progress
+            tests/test_hostname_identity.sh
+            tests/test_identity_contract.sh
+            tests/test_progress_certname_refresh.sh
+            tests/test_reset_identity_contract.sh
+            tests/test_vector_config.sh
+          )
+          bash -n "${scripts[@]}"
+          shellcheck --severity=error "${scripts[@]}"
+          shfmt -d "${scripts[@]}"
+      - name: Test stable device identity
+        run: |
+          tests/test_hostname_identity.sh
+          tests/test_identity_contract.sh
+          tests/test_progress_certname_refresh.sh
+          tests/test_reset_identity_contract.sh
+
+  yaml-and-vector-quality:
+    name: YAML and Vector semantic validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Install YAML and Vector tooling
+        run: |
+          pipx install yamllint
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          curl -1sLf https://setup.vector.dev | sudo -E bash
+          sudo apt-get update
+          sudo apt-get install -y "vector=$(cat .vector-version)-1"
+      - name: Validate YAML
+        run: yamllint -c .yamllint.yml .
+      - name: Validate GitHub Actions semantics
+        run: actionlint -shellcheck 'shellcheck --severity=error'
+      - name: Validate Docker Compose semantics
+        run: |
+          for compose_file in system-files/docker-compose-*.yml; do
+            docker compose -f "$compose_file" config -q
+          done
+      - name: Validate Vector topology and endpoint interpolation
+        run: tests/test_vector_config.sh

@@ -30,9 +30,11 @@ Behavior:
 
 1. Validates disk space (>20 GB total, >6 GB cache).
 2. Installs Puppet 8 if missing.
-3. Generates the hostname with environment prefix and epoch timestamp
-   (format: `<env>-<type>-<secret>-<serial>-<epoch>`, e.g. `prod-rpi4-c7368910b6-14b52e5c-1737049200`).
-   The epoch ensures unique certnames, eliminating Puppet certificate conflicts on re-registration.
+3. Generates a stable hardware-based device hostname
+   (format: `<env>-<type>-<secret>-<serial>`, e.g. `prod-rpi4-c7368910b6-14b52e5c`).
+   Backend registration, Tailscale, logs, and metrics all use this stable identity.
+   Puppet uses a separate persisted certname with a rotation timestamp suffix, so
+   certificate replacement cannot create duplicate backend or Grafana identities.
 4. Installs `configure_puppet_agent.service` and starts the agent.
 5. Leaves `/opt/configure_puppet_agent.sh` on disk so Puppet can re-run it if
    needed.

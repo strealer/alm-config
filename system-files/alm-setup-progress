@@ -51,31 +51,42 @@ STATE_DIR="/var/lib/alm/state"
 SETUP_COMPLETE="${STATE_DIR}/10_service_responding"
 PUPPET_TRIGGERED_FLAG="/var/lib/alm/puppet_triggered_this_boot"
 PUPPET_LAST_RUN="/opt/puppetlabs/puppet/cache/state/last_run_report.yaml"
+readonly PUPPET_BIN="${PUPPET_BIN:-/opt/puppetlabs/bin/puppet}"
 
 # Device identification
 DEVICE_HOSTNAME=$(hostname 2>/dev/null || echo "unknown")
 DEVICE_SERIAL=""
 
+# Resolve this dynamically. The monitor often starts before Puppet is installed
+# or puppet.conf exists and must observe the certname as soon as bootstrap writes it.
+get_puppet_certname() {
+	local certname=""
+	if [[ -x "$PUPPET_BIN" ]]; then
+		certname=$($PUPPET_BIN config print certname 2>/dev/null || true)
+	fi
+	printf '%s\n' "${certname:-$DEVICE_HOSTNAME}"
+}
+
 # Extract serial number from hostname or /proc/cpuinfo
 get_device_serial() {
-    local serial=""
+	local serial=""
 
-    # Extract serial from hostname (format: <env>-<type>-<secret>-<serial>-<epoch>)
-    # Serial is the 4th field; epoch timestamp is the 5th (optional)
-    if [[ "$DEVICE_HOSTNAME" =~ -([a-f0-9]{8})-[0-9]+$ ]]; then
-        # Current format with epoch timestamp (e.g., prod-rpi4-c7368910b6-14b52e5c-1737049200)
-        serial="${BASH_REMATCH[1]}"
-    elif [[ "$DEVICE_HOSTNAME" =~ -([a-f0-9]{8})$ ]]; then
-        # Legacy format without timestamp (e.g., prod-rpi4-c7368910b6-14b52e5c)
-        serial="${BASH_REMATCH[1]}"
-    fi
+	# Extract serial from the stable hostname. Accept the former epoch-suffixed
+	# format during fleet migration.
+	if [[ "$DEVICE_HOSTNAME" =~ -([a-f0-9]{8})-[0-9]+$ ]]; then
+		# Legacy format with epoch timestamp
+		serial="${BASH_REMATCH[1]}"
+	elif [[ "$DEVICE_HOSTNAME" =~ -([a-f0-9]{8})$ ]]; then
+		# Stable current format (e.g., prod-rpi4-c7368910b6-14b52e5c)
+		serial="${BASH_REMATCH[1]}"
+	fi
 
-    # Fallback: read from /proc/cpuinfo (Raspberry Pi)
-    if [[ -z "$serial" ]] && [[ -f /proc/cpuinfo ]]; then
-        serial=$(grep -i "^Serial" /proc/cpuinfo 2>/dev/null | awk '{print $3}' | tail -c 9 | tr -d '\n')
-    fi
+	# Fallback: read from /proc/cpuinfo (Raspberry Pi)
+	if [[ -z "$serial" ]] && [[ -f /proc/cpuinfo ]]; then
+		serial=$(grep -i "^Serial" /proc/cpuinfo 2>/dev/null | awk '{print $3}' | tail -c 9 | tr -d '\n')
+	fi
 
-    echo "$serial"
+	echo "$serial"
 }
 
 DEVICE_SERIAL=$(get_device_serial)
@@ -92,16 +103,16 @@ readonly NC='\033[0m' # No Color
 
 # Step definitions (number, state_file_suffix, description, active_description)
 declare -a STEPS=(
-    "01|docker_installed|Docker installed|Installing Docker..."
-    "02|docker_running|Docker service running|Starting Docker service..."
-    "03|puppet_installed|Puppet agent installed|Installing Puppet agent..."
-    "04|puppet_configured|Puppet configured|Configuring Puppet agent..."
-    "05|puppet_cert_ok|Puppet certificate valid|Obtaining Puppet certificate..."
-    "06|puppet_run_ok|Puppet run successful|Running Puppet configuration..."
-    "07|gcp_token_available|Registry authentication ready|Setting up registry access..."
-    "08|images_pulled|Docker images pulled|Pulling Docker images (2-4 min)..."
-    "09|init_complete|Device registration complete|Registering device..."
-    "10|service_responding|Service responding|Starting ALM service..."
+	"01|docker_installed|Docker installed|Installing Docker..."
+	"02|docker_running|Docker service running|Starting Docker service..."
+	"03|puppet_installed|Puppet agent installed|Installing Puppet agent..."
+	"04|puppet_configured|Puppet configured|Configuring Puppet agent..."
+	"05|puppet_cert_ok|Puppet certificate valid|Obtaining Puppet certificate..."
+	"06|puppet_run_ok|Puppet run successful|Running Puppet configuration..."
+	"07|gcp_token_available|Registry authentication ready|Setting up registry access..."
+	"08|images_pulled|Docker images pulled|Pulling Docker images (2-4 min)..."
+	"09|init_complete|Device registration complete|Registering device..."
+	"10|service_responding|Service responding|Starting ALM service..."
 )
 
 # ============================================================================
@@ -110,39 +121,39 @@ declare -a STEPS=(
 
 # Create state directory if it doesn't exist (called by root/Puppet)
 ensure_state_dir() {
-    if [[ ! -d "$STATE_DIR" ]]; then
-        mkdir -p "$STATE_DIR" 2>/dev/null || true
-        chmod 755 "$STATE_DIR" 2>/dev/null || true
-    fi
+	if [[ ! -d "$STATE_DIR" ]]; then
+		mkdir -p "$STATE_DIR" 2>/dev/null || true
+		chmod 755 "$STATE_DIR" 2>/dev/null || true
+	fi
 }
 
 # Check if a step is complete (by state file)
 is_step_complete() {
-    local step_num="$1"
-    local state_file="${STATE_DIR}/${step_num}_*"
+	local step_num="$1"
+	local state_file="${STATE_DIR}/${step_num}_*"
 
-    # Use glob to find file
-    for f in $state_file; do
-        if [[ -f "$f" ]]; then
-            return 0
-        fi
-    done
-    return 1
+	# Use glob to find file
+	for f in $state_file; do
+		if [[ -f "$f" ]]; then
+			return 0
+		fi
+	done
+	return 1
 }
 
 # Check if a specific error exists
 has_error() {
-    local error_type="$1"
-    [[ -f "${STATE_DIR}/error_${error_type}" ]]
+	local error_type="$1"
+	[[ -f "${STATE_DIR}/error_${error_type}" ]]
 }
 
 # Get error message from error file
 get_error_message() {
-    local error_type="$1"
-    local error_file="${STATE_DIR}/error_${error_type}"
-    if [[ -f "$error_file" ]]; then
-        cat "$error_file" 2>/dev/null || echo "Unknown error"
-    fi
+	local error_type="$1"
+	local error_file="${STATE_DIR}/error_${error_type}"
+	if [[ -f "$error_file" ]]; then
+		cat "$error_file" 2>/dev/null || echo "Unknown error"
+	fi
 }
 
 # ============================================================================
@@ -151,68 +162,68 @@ get_error_message() {
 
 # These run live checks for steps that can be detected without docker access
 detect_step_live() {
-    local step_num="$1"
+	local step_num="$1"
 
-    case "$step_num" in
-        "01") # Docker installed
-            command -v docker &>/dev/null
-            ;;
-        "02") # Docker running
-            systemctl is-active --quiet docker 2>/dev/null
-            ;;
-        "03") # Puppet installed
-            [[ -x "/opt/puppetlabs/bin/puppet" ]]
-            ;;
-        "04") # Puppet configured
-            [[ -f "/etc/puppetlabs/puppet/puppet.conf" ]] && \
-            grep -q "server.*puppet.strealer.io" /etc/puppetlabs/puppet/puppet.conf 2>/dev/null
-            ;;
-        "05") # Puppet cert valid - check for signed cert (not just CA)
-            local cert_dir="/etc/puppetlabs/puppet/ssl/certs"
-            local hostname
-            hostname=$(hostname 2>/dev/null || echo "unknown")
-            [[ -f "${cert_dir}/${hostname}.pem" ]]
-            ;;
-        "06") # Puppet run success - check last run report
-            if [[ -f "$PUPPET_LAST_RUN" ]]; then
-                # Check status field - should be 'changed' or 'unchanged' (not 'failed')
-                local status
-                status=$(grep "^status:" "$PUPPET_LAST_RUN" 2>/dev/null | head -1 | awk '{print $2}')
-                [[ "$status" == "changed" || "$status" == "unchanged" ]]
-            else
-                return 1
-            fi
-            ;;
-        "07") # GCP token available
-            [[ -f "/opt/alm/config/gcp-registry-token" ]] && \
-            [[ -s "/opt/alm/config/gcp-registry-token" ]]
-            ;;
-        "08") # Images pulled - check state file only (can't detect without docker)
-            is_step_complete "08"
-            ;;
-        "09") # Init complete - check state file or init container exit
-            is_step_complete "09"
-            ;;
-        "10") # Service responding - curl localhost:80
-            curl -sf -o /dev/null --connect-timeout 2 http://localhost:80 2>/dev/null
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+	case "$step_num" in
+	"01") # Docker installed
+		command -v docker &>/dev/null
+		;;
+	"02") # Docker running
+		systemctl is-active --quiet docker 2>/dev/null
+		;;
+	"03") # Puppet installed
+		[[ -x "$PUPPET_BIN" ]]
+		;;
+	"04") # Puppet configured
+		[[ -f "/etc/puppetlabs/puppet/puppet.conf" ]] &&
+			grep -q "server.*puppet.strealer.io" /etc/puppetlabs/puppet/puppet.conf 2>/dev/null
+		;;
+	"05") # Puppet cert valid - check for signed cert (not just CA)
+		local cert_dir="/etc/puppetlabs/puppet/ssl/certs"
+		local puppet_certname
+		puppet_certname=$(get_puppet_certname)
+		[[ -n "$puppet_certname" ]] && [[ -f "${cert_dir}/${puppet_certname}.pem" ]]
+		;;
+	"06") # Puppet run success - check last run report
+		if [[ -f "$PUPPET_LAST_RUN" ]]; then
+			# Check status field - should be 'changed' or 'unchanged' (not 'failed')
+			local status
+			status=$(grep "^status:" "$PUPPET_LAST_RUN" 2>/dev/null | head -1 | awk '{print $2}')
+			[[ "$status" == "changed" || "$status" == "unchanged" ]]
+		else
+			return 1
+		fi
+		;;
+	"07") # GCP token available
+		[[ -f "/opt/alm/config/gcp-registry-token" ]] &&
+			[[ -s "/opt/alm/config/gcp-registry-token" ]]
+		;;
+	"08") # Images pulled - check state file only (can't detect without docker)
+		is_step_complete "08"
+		;;
+	"09") # Init complete - check state file or init container exit
+		is_step_complete "09"
+		;;
+	"10") # Service responding - curl localhost:80
+		curl -sf -o /dev/null --connect-timeout 2 http://localhost:80 2>/dev/null
+		;;
+	*)
+		return 1
+		;;
+	esac
 }
 
 # Check step completion (state file first, then live detection)
 check_step() {
-    local step_num="$1"
+	local step_num="$1"
 
-    # First check state file (authoritative)
-    if is_step_complete "$step_num"; then
-        return 0
-    fi
+	# First check state file (authoritative)
+	if is_step_complete "$step_num"; then
+		return 0
+	fi
 
-    # Fall back to live detection
-    detect_step_live "$step_num"
+	# Fall back to live detection
+	detect_step_live "$step_num"
 }
 
 # ============================================================================
@@ -220,55 +231,57 @@ check_step() {
 # ============================================================================
 
 detect_errors() {
-    local errors=()
+	local errors=()
 
-    # Check for certificate mismatch (from Puppet logs)
-    if [[ -f "/var/log/syslog" ]]; then
-        if grep -q "certificate.*does not match.*private key" /var/log/syslog 2>/dev/null; then
-            errors+=("cert_mismatch")
-        fi
-    fi
+	# Check for certificate mismatch (from Puppet logs)
+	if [[ -f "/var/log/syslog" ]]; then
+		if grep -q "certificate.*does not match.*private key" /var/log/syslog 2>/dev/null; then
+			errors+=("cert_mismatch")
+		fi
+	fi
 
-    # Check for secret prefix not found (from journalctl puppet logs)
-    # The autosign script logs "REJECT" when secret prefix is missing
-    if journalctl -u puppet --since "10 minutes ago" 2>/dev/null | grep -q "secret prefix not found"; then
-        errors+=("secret_not_found")
-    fi
+	# Check for secret prefix not found (from journalctl puppet logs)
+	# The autosign script logs "REJECT" when secret prefix is missing
+	if journalctl -u puppet --since "10 minutes ago" 2>/dev/null | grep -q "secret prefix not found"; then
+		errors+=("secret_not_found")
+	fi
 
-    # Check for CSR waiting (certificate not being signed)
-    # This could indicate serial not in whitelist
-    if [[ -f "/etc/puppetlabs/puppet/ssl/certificate_requests/${DEVICE_HOSTNAME}.pem" ]] && \
-       [[ ! -f "/etc/puppetlabs/puppet/ssl/certs/${DEVICE_HOSTNAME}.pem" ]]; then
-        # CSR exists but cert doesn't - might be waiting or rejected
-        local csr_age
-        csr_age=$(stat -c %Y "/etc/puppetlabs/puppet/ssl/certificate_requests/${DEVICE_HOSTNAME}.pem" 2>/dev/null || echo 0)
-        local now
-        now=$(date +%s)
-        if [[ $((now - csr_age)) -gt 120 ]]; then
-            # CSR is older than 2 minutes - likely rejected
-            errors+=("csr_pending")
-        fi
-    fi
+	# Check for CSR waiting (certificate not being signed)
+	# This could indicate serial not in whitelist
+	local puppet_certname
+	puppet_certname=$(get_puppet_certname)
+	if [[ -f "/etc/puppetlabs/puppet/ssl/certificate_requests/${puppet_certname}.pem" ]] &&
+		[[ ! -f "/etc/puppetlabs/puppet/ssl/certs/${puppet_certname}.pem" ]]; then
+		# CSR exists but cert doesn't - might be waiting or rejected
+		local csr_age
+		csr_age=$(stat -c %Y "/etc/puppetlabs/puppet/ssl/certificate_requests/${puppet_certname}.pem" 2>/dev/null || echo 0)
+		local now
+		now=$(date +%s)
+		if [[ $((now - csr_age)) -gt 120 ]]; then
+			# CSR is older than 2 minutes - likely rejected
+			errors+=("csr_pending")
+		fi
+	fi
 
-    # Check for authentication failures
-    if has_error "auth_failed"; then
-        errors+=("auth_failed")
-    fi
+	# Check for authentication failures
+	if has_error "auth_failed"; then
+		errors+=("auth_failed")
+	fi
 
-    # Check for image pull failures
-    if has_error "image_pull_failed"; then
-        errors+=("image_pull_failed")
-    fi
+	# Check for image pull failures
+	if has_error "image_pull_failed"; then
+		errors+=("image_pull_failed")
+	fi
 
-    # Check for network issues
-    if ! ping -c1 -W2 8.8.8.8 &>/dev/null; then
-        errors+=("no_network")
-    fi
+	# Check for network issues
+	if ! ping -c1 -W2 8.8.8.8 &>/dev/null; then
+		errors+=("no_network")
+	fi
 
-    # Return errors (only if array is not empty)
-    if [[ ${#errors[@]} -gt 0 ]]; then
-        printf '%s\n' "${errors[@]}"
-    fi
+	# Return errors (only if array is not empty)
+	if [[ ${#errors[@]} -gt 0 ]]; then
+		printf '%s\n' "${errors[@]}"
+	fi
 }
 
 # ============================================================================
@@ -276,45 +289,45 @@ detect_errors() {
 # ============================================================================
 
 get_progress() {
-    local completed=0
-    local total=${#STEPS[@]}
+	local completed=0
+	local total=${#STEPS[@]}
 
-    for step_def in "${STEPS[@]}"; do
-        IFS='|' read -r num suffix desc active <<< "$step_def"
-        if check_step "$num"; then
-            completed=$((completed + 1))
-        else
-            break  # Stop at first incomplete step
-        fi
-    done
+	for step_def in "${STEPS[@]}"; do
+		IFS='|' read -r num suffix desc active <<<"$step_def"
+		if check_step "$num"; then
+			completed=$((completed + 1))
+		else
+			break # Stop at first incomplete step
+		fi
+	done
 
-    echo "$((completed * 100 / total))"
+	echo "$((completed * 100 / total))"
 }
 
 get_completed_steps() {
-    local completed=0
+	local completed=0
 
-    for step_def in "${STEPS[@]}"; do
-        IFS='|' read -r num suffix desc active <<< "$step_def"
-        if check_step "$num"; then
-            completed=$((completed + 1))
-        else
-            break
-        fi
-    done
+	for step_def in "${STEPS[@]}"; do
+		IFS='|' read -r num suffix desc active <<<"$step_def"
+		if check_step "$num"; then
+			completed=$((completed + 1))
+		else
+			break
+		fi
+	done
 
-    echo "$completed"
+	echo "$completed"
 }
 
 get_current_step_info() {
-    for step_def in "${STEPS[@]}"; do
-        IFS='|' read -r num suffix desc active <<< "$step_def"
-        if ! check_step "$num"; then
-            echo "${num}|${active}"
-            return
-        fi
-    done
-    echo "done|Setup complete!"
+	for step_def in "${STEPS[@]}"; do
+		IFS='|' read -r num suffix desc active <<<"$step_def"
+		if ! check_step "$num"; then
+			echo "${num}|${active}"
+			return
+		fi
+	done
+	echo "done|Setup complete!"
 }
 
 # ============================================================================
@@ -322,115 +335,116 @@ get_current_step_info() {
 # ============================================================================
 
 progress_bar() {
-    local percent=$1
-    local width=${2:-60}
-    local filled=$((percent * width / 100))
-    local empty=$((width - filled))
-    local bar=""
+	local percent=$1
+	local width=${2:-60}
+	local filled=$((percent * width / 100))
+	local empty=$((width - filled))
+	local bar=""
 
-    for ((i=0; i<filled; i++)); do bar+="█"; done
-    for ((i=0; i<empty; i++)); do bar+="░"; done
+	for ((i = 0; i < filled; i++)); do bar+="█"; done
+	for ((i = 0; i < empty; i++)); do bar+="░"; done
 
-    echo -e "[${GREEN}${bar}${NC}] ${percent}%"
+	echo -e "[${GREEN}${bar}${NC}] ${percent}%"
 }
 
 show_step_status() {
-    local completed
-    completed=$(get_completed_steps)
+	local completed
+	completed=$(get_completed_steps)
 
-    echo -e "${CYAN}Step Details:${NC}"
+	echo -e "${CYAN}Step Details:${NC}"
 
-    local i=0
-    for step_def in "${STEPS[@]}"; do
-        IFS='|' read -r num suffix desc active <<< "$step_def"
-        i=$((i + 1))
+	local i=0
+	for step_def in "${STEPS[@]}"; do
+		IFS='|' read -r num suffix desc active <<<"$step_def"
+		i=$((i + 1))
 
-        if check_step "$num"; then
-            echo -e "  ${GREEN}✓${NC} ${desc}"
-        elif [[ $i -eq $((completed + 1)) ]]; then
-            # Current step - show as in progress
-            echo -e "  ${YELLOW}◐${NC} ${active}"
-        else
-            echo -e "  ${GRAY}○${NC} ${desc}"
-        fi
-    done
+		if check_step "$num"; then
+			echo -e "  ${GREEN}✓${NC} ${desc}"
+		elif [[ $i -eq $((completed + 1)) ]]; then
+			# Current step - show as in progress
+			echo -e "  ${YELLOW}◐${NC} ${active}"
+		else
+			echo -e "  ${GRAY}○${NC} ${desc}"
+		fi
+	done
 }
 
 show_error_info() {
-    local errors
-    mapfile -t errors < <(detect_errors)
+	local errors
+	mapfile -t errors < <(detect_errors)
 
-    if [[ ${#errors[@]} -eq 0 ]]; then
-        return
-    fi
+	if [[ ${#errors[@]} -eq 0 ]]; then
+		return
+	fi
 
-    echo ""
-    echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${RED}⚠  Issue Detected${NC}"
-    echo ""
+	echo ""
+	echo -e "${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+	echo -e "${RED}⚠  Issue Detected${NC}"
+	echo ""
 
-    for error in "${errors[@]}"; do
-        case "$error" in
-            "cert_mismatch")
-                echo -e "${YELLOW}Certificate mismatch detected${NC}"
-                echo "  The Puppet certificate doesn't match the private key."
-                echo "  This usually means the device was re-imaged or reset."
-                echo ""
-                echo -e "  ${CYAN}Auto-fix:${NC} The server will clean the old cert automatically."
-                echo ""
-                echo -e "  ${YELLOW}If this persists, check the hostname format:${NC}"
-                echo "    Format: <env>-<type>-<secret>-<serial>-<epoch>"
-                echo "    Example: prod-rpi4-<secret>-${DEVICE_SERIAL:-<serial>}"
-                echo "    Contact admin for the correct autosign secret."
-                ;;
-            "auth_failed")
-                echo -e "${YELLOW}Registry authentication failed${NC}"
-                echo "  Unable to authenticate with GCP Artifact Registry."
-                echo ""
-                echo -e "  ${CYAN}This usually resolves automatically on next Puppet run.${NC}"
-                ;;
-            "image_pull_failed")
-                echo -e "${YELLOW}Docker image pull failed${NC}"
-                local msg
-                msg=$(get_error_message "image_pull_failed")
-                echo "  $msg"
-                ;;
-            "no_network")
-                echo -e "${YELLOW}No network connection${NC}"
-                echo "  Cannot reach the internet."
-                echo ""
-                echo "  • Check Ethernet cable connection"
-                echo "  • Or configure WiFi: sudo nmtui"
-                ;;
-            "secret_not_found")
-                echo -e "${RED}Autosign secret not found in hostname${NC}"
-                echo "  The device hostname doesn't contain the correct secret prefix."
-                echo ""
-                echo -e "  ${YELLOW}Current hostname: ${CYAN}${DEVICE_HOSTNAME}${NC}"
-                echo ""
-                echo "  Required format: <env>-<type>-<secret>-<serial>"
-                echo "  Example: prod-rpi4-<secret>-${DEVICE_SERIAL:-12345678}"
-                echo ""
-                echo "  Contact admin for the correct autosign secret,"
-                echo "  then update the hostname and try again."
-                ;;
-            "csr_pending")
-                echo -e "${YELLOW}Certificate signing request pending${NC}"
-                echo "  The certificate request has not been signed."
-                echo "  This may indicate the hostname doesn't have the correct secret."
-                echo ""
-                echo -e "  ${YELLOW}Current hostname: ${CYAN}${DEVICE_HOSTNAME}${NC}"
-                echo ""
-                echo "  Required format: <env>-<type>-<secret>-<serial>"
-                echo "  Contact admin to verify the hostname includes the correct secret."
-                ;;
-        esac
-        echo ""
-    done
+	for error in "${errors[@]}"; do
+		case "$error" in
+		"cert_mismatch")
+			echo -e "${YELLOW}Certificate mismatch detected${NC}"
+			echo "  The Puppet certificate doesn't match the private key."
+			echo "  This usually means the device was re-imaged or reset."
+			echo ""
+			echo -e "  ${CYAN}Auto-fix:${NC} The bootstrap rotates damaged local TLS credentials."
+			echo ""
+			echo -e "  ${YELLOW}If this persists, check the device identity format:${NC}"
+			echo "    Stable hostname: <env>-<type>-<secret>-<serial>"
+			echo "    Puppet certname: <stable-hostname>-<rotation-timestamp>"
+			echo "    Example: prod-rpi4-<secret>-${DEVICE_SERIAL:-<serial>}"
+			echo "    Contact admin for the correct autosign secret."
+			;;
+		"auth_failed")
+			echo -e "${YELLOW}Registry authentication failed${NC}"
+			echo "  Unable to authenticate with GCP Artifact Registry."
+			echo ""
+			echo -e "  ${CYAN}This usually resolves automatically on next Puppet run.${NC}"
+			;;
+		"image_pull_failed")
+			echo -e "${YELLOW}Docker image pull failed${NC}"
+			local msg
+			msg=$(get_error_message "image_pull_failed")
+			echo "  $msg"
+			;;
+		"no_network")
+			echo -e "${YELLOW}No network connection${NC}"
+			echo "  Cannot reach the internet."
+			echo ""
+			echo "  • Check Ethernet cable connection"
+			echo "  • Or configure WiFi: sudo nmtui"
+			;;
+		"secret_not_found")
+			echo -e "${RED}Autosign secret not found in hostname${NC}"
+			echo "  The device hostname doesn't contain the correct secret prefix."
+			echo ""
+			echo -e "  ${YELLOW}Current hostname: ${CYAN}${DEVICE_HOSTNAME}${NC}"
+			echo ""
+			echo "  Required format: <env>-<type>-<secret>-<serial>"
+			echo "  Example: prod-rpi4-<secret>-${DEVICE_SERIAL:-12345678}"
+			echo ""
+			echo "  Contact admin for the correct autosign secret,"
+			echo "  then update the hostname and try again."
+			;;
+		"csr_pending")
+			echo -e "${YELLOW}Certificate signing request pending${NC}"
+			echo "  The certificate request has not been signed."
+			echo "  This may indicate the hostname doesn't have the correct secret."
+			echo ""
+			echo -e "  ${YELLOW}Current hostname: ${CYAN}${DEVICE_HOSTNAME}${NC}"
+			echo ""
+			echo "  Required format: <env>-<type>-<secret>-<serial>"
+			echo "  Contact admin to verify the hostname includes the correct secret."
+			;;
+		esac
+		echo ""
+	done
 }
 
 display_header() {
-    cat << "EOF"
+	cat <<"EOF"
 ╔═════════════════════════════════════════════════════════════════════════╗
 ║                                                                         ║
 ║     ███████╗████████╗██████╗ ███████╗ █████╗ ██╗     ███████╗██████╗    ║
@@ -444,86 +458,86 @@ display_header() {
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝
 EOF
-    # Show device hostname below header
-    echo ""
-    echo -e "  ${BLUE}Hostname:${NC} ${DEVICE_HOSTNAME}"
+	# Show device hostname below header
+	echo ""
+	echo -e "  ${BLUE}Hostname:${NC} ${DEVICE_HOSTNAME}"
 }
 
 display_progress() {
-    clear
-    display_header
+	clear
+	display_header
 
-    echo ""
-    local progress
-    progress=$(get_progress)
-    local current_info
-    current_info=$(get_current_step_info)
-    local current_step="${current_info%%|*}"
-    local current_desc="${current_info#*|}"
+	echo ""
+	local progress
+	progress=$(get_progress)
+	local current_info
+	current_info=$(get_current_step_info)
+	local current_step="${current_info%%|*}"
+	local current_desc="${current_info#*|}"
 
-    # Progress bar
-    echo -e "${CYAN}Setup Progress:${NC}"
-    progress_bar "$progress"
-    echo ""
+	# Progress bar
+	echo -e "${CYAN}Setup Progress:${NC}"
+	progress_bar "$progress"
+	echo ""
 
-    # Current step
-    echo -e "${YELLOW}Current Step:${NC} ${current_desc}"
+	# Current step
+	echo -e "${YELLOW}Current Step:${NC} ${current_desc}"
 
-    # Show if Puppet is running
-    if pgrep -f "puppet agent" &>/dev/null; then
-        echo -e "${CYAN}  └─ Puppet agent is running...${NC}"
-    fi
+	# Show if Puppet is running
+	if pgrep -f "puppet agent" &>/dev/null; then
+		echo -e "${CYAN}  └─ Puppet agent is running...${NC}"
+	fi
 
-    echo ""
+	echo ""
 
-    # Step details
-    show_step_status
+	# Step details
+	show_step_status
 
-    # Error info if any
-    show_error_info
+	# Error info if any
+	show_error_info
 
-    echo ""
-    echo -e "${GRAY}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
+	echo ""
+	echo -e "${GRAY}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+	echo ""
 
-    if [[ "$progress" -eq 100 ]]; then
-        echo -e "${GREEN}✅ Setup Complete!${NC}"
-        echo ""
-        echo "Your device is now ready. Available commands:"
-        echo -e "  ${BLUE}alm status${NC}   - Check device and container status"
-        echo -e "  ${BLUE}alm logs${NC}     - View container logs"
-        echo -e "  ${BLUE}alm help${NC}     - Show all available commands"
-        echo ""
+	if [[ "$progress" -eq 100 ]]; then
+		echo -e "${GREEN}✅ Setup Complete!${NC}"
+		echo ""
+		echo "Your device is now ready. Available commands:"
+		echo -e "  ${BLUE}alm status${NC}   - Check device and container status"
+		echo -e "  ${BLUE}alm logs${NC}     - View container logs"
+		echo -e "  ${BLUE}alm help${NC}     - Show all available commands"
+		echo ""
 
-        # Create completion state file if we have permission
-        if [[ -w "$STATE_DIR" ]] || [[ $(whoami) == "root" ]]; then
-            ensure_state_dir
-            touch "${STATE_DIR}/10_service_responding" 2>/dev/null || true
-        fi
-    else
-        echo -e "${YELLOW}⏳ Setup in progress...${NC}"
-        echo ""
+		# Create completion state file if we have permission
+		if [[ -w "$STATE_DIR" ]] || [[ $(whoami) == "root" ]]; then
+			ensure_state_dir
+			touch "${STATE_DIR}/10_service_responding" 2>/dev/null || true
+		fi
+	else
+		echo -e "${YELLOW}⏳ Setup in progress...${NC}"
+		echo ""
 
-        # Estimate time based on current step
-        local completed
-        completed=$(get_completed_steps)
-        local remaining=$((10 - completed))
-        local est_minutes=$((remaining / 2 + 1))
+		# Estimate time based on current step
+		local completed
+		completed=$(get_completed_steps)
+		local remaining=$((10 - completed))
+		local est_minutes=$((remaining / 2 + 1))
 
-        if [[ "$est_minutes" -eq 1 ]]; then
-            echo "Estimated time remaining: ~1 minute"
-        else
-            echo "Estimated time remaining: ~${est_minutes} minutes"
-        fi
+		if [[ "$est_minutes" -eq 1 ]]; then
+			echo "Estimated time remaining: ~1 minute"
+		else
+			echo "Estimated time remaining: ~${est_minutes} minutes"
+		fi
 
-        echo ""
-        echo "You can:"
-        echo "  • Wait here and watch progress (updates every 3 seconds)"
-        echo -e "  • Log out and check back later (${BLUE}ssh almuser@<device-ip>${NC})"
-        echo -e "  • Monitor detailed logs: ${BLUE}journalctl -u puppet -f${NC}"
-        echo ""
-        echo -e "${GRAY}Press Ctrl+C to exit this monitoring screen${NC}"
-    fi
+		echo ""
+		echo "You can:"
+		echo "  • Wait here and watch progress (updates every 3 seconds)"
+		echo -e "  • Log out and check back later (${BLUE}ssh almuser@<device-ip>${NC})"
+		echo -e "  • Monitor detailed logs: ${BLUE}journalctl -u puppet -f${NC}"
+		echo ""
+		echo -e "${GRAY}Press Ctrl+C to exit this monitoring screen${NC}"
+	fi
 }
 
 # ============================================================================
@@ -531,41 +545,41 @@ display_progress() {
 # ============================================================================
 
 trigger_puppet_if_needed() {
-    # Only root can trigger
-    [[ $(whoami) != "root" ]] && return 0
+	# Only root can trigger
+	[[ $(whoami) != "root" ]] && return 0
 
-    # Skip if already triggered this boot
-    [[ -f "$PUPPET_TRIGGERED_FLAG" ]] && return 0
+	# Skip if already triggered this boot
+	[[ -f "$PUPPET_TRIGGERED_FLAG" ]] && return 0
 
-    # Skip if setup complete
-    check_step "10" && return 0
+	# Skip if setup complete
+	check_step "10" && return 0
 
-    # Check network
-    if ! ping -c1 -W2 8.8.8.8 &>/dev/null; then
-        return 1
-    fi
+	# Check network
+	if ! ping -c1 -W2 8.8.8.8 &>/dev/null; then
+		return 1
+	fi
 
-    # Check if Puppet ran recently (5 min)
-    if [[ -f "$PUPPET_LAST_RUN" ]]; then
-        local last_run_time now age
-        last_run_time=$(stat -c %Y "$PUPPET_LAST_RUN" 2>/dev/null || stat -f %m "$PUPPET_LAST_RUN" 2>/dev/null || echo 0)
-        now=$(date +%s)
-        age=$((now - last_run_time))
-        if [[ "$age" -lt 300 ]]; then
-            ensure_state_dir
-            touch "$PUPPET_TRIGGERED_FLAG" 2>/dev/null || true
-            return 0
-        fi
-    fi
+	# Check if Puppet ran recently (5 min)
+	if [[ -f "$PUPPET_LAST_RUN" ]]; then
+		local last_run_time now age
+		last_run_time=$(stat -c %Y "$PUPPET_LAST_RUN" 2>/dev/null || stat -f %m "$PUPPET_LAST_RUN" 2>/dev/null || echo 0)
+		now=$(date +%s)
+		age=$((now - last_run_time))
+		if [[ "$age" -lt 300 ]]; then
+			ensure_state_dir
+			touch "$PUPPET_TRIGGERED_FLAG" 2>/dev/null || true
+			return 0
+		fi
+	fi
 
-    # Trigger Puppet in background
-    echo -e "${YELLOW}Triggering Puppet run...${NC}"
-    ensure_state_dir
-    touch "$PUPPET_TRIGGERED_FLAG" 2>/dev/null || true
-    mkdir -p /var/log/alm 2>/dev/null || true
-    nohup /opt/puppetlabs/bin/puppet agent -t >/var/log/alm/puppet-trigger.log 2>&1 &
+	# Trigger Puppet in background
+	echo -e "${YELLOW}Triggering Puppet run...${NC}"
+	ensure_state_dir
+	touch "$PUPPET_TRIGGERED_FLAG" 2>/dev/null || true
+	mkdir -p /var/log/alm 2>/dev/null || true
+	nohup "$PUPPET_BIN" agent -t >/var/log/alm/puppet-trigger.log 2>&1 &
 
-    return 0
+	return 0
 }
 
 # ============================================================================
@@ -573,11 +587,11 @@ trigger_puppet_if_needed() {
 # ============================================================================
 
 is_setup_complete() {
-    # Require BOTH state file AND live service check
-    # State file confirms Puppet completed successfully
-    # Live check confirms service is actually responding
-    [[ -f "${STATE_DIR}/10_service_responding" ]] || return 1
-    curl -sf -o /dev/null --connect-timeout 2 http://localhost:80 2>/dev/null
+	# Require BOTH state file AND live service check
+	# State file confirms Puppet completed successfully
+	# Live check confirms service is actually responding
+	[[ -f "${STATE_DIR}/10_service_responding" ]] || return 1
+	curl -sf -o /dev/null --connect-timeout 2 http://localhost:80 2>/dev/null
 }
 
 # ============================================================================
@@ -585,51 +599,51 @@ is_setup_complete() {
 # ============================================================================
 
 main() {
-    local network_warned=false
+	local network_warned=false
 
-    # Ensure state directory exists
-    ensure_state_dir
+	# Ensure state directory exists
+	ensure_state_dir
 
-    while true; do
-        # Check if complete
-        if is_setup_complete; then
-            clear
-            display_progress
-            exit 0
-        fi
+	while true; do
+		# Check if complete
+		if is_setup_complete; then
+			clear
+			display_progress
+			exit 0
+		fi
 
-        # Try to trigger Puppet (root only)
-        if ! trigger_puppet_if_needed; then
-            if [[ "$network_warned" == "false" ]]; then
-                clear
-                display_header
-                echo ""
-                echo -e "${RED}⚠️  No Network Connection${NC}"
-                echo ""
-                echo -e "${YELLOW}Please connect this device to the internet:${NC}"
-                echo "  • Connect an Ethernet cable, OR"
-                echo "  • Configure WiFi using: sudo nmtui"
-                echo ""
-                echo -e "${GRAY}Checking for network every 5 seconds...${NC}"
-                echo -e "${GRAY}Press Ctrl+C to exit${NC}"
-                network_warned=true
-            fi
-            sleep 5
-            continue
-        fi
+		# Try to trigger Puppet (root only)
+		if ! trigger_puppet_if_needed; then
+			if [[ "$network_warned" == "false" ]]; then
+				clear
+				display_header
+				echo ""
+				echo -e "${RED}⚠️  No Network Connection${NC}"
+				echo ""
+				echo -e "${YELLOW}Please connect this device to the internet:${NC}"
+				echo "  • Connect an Ethernet cable, OR"
+				echo "  • Configure WiFi using: sudo nmtui"
+				echo ""
+				echo -e "${GRAY}Checking for network every 5 seconds...${NC}"
+				echo -e "${GRAY}Press Ctrl+C to exit${NC}"
+				network_warned=true
+			fi
+			sleep 5
+			continue
+		fi
 
-        network_warned=false
+		network_warned=false
 
-        # Display progress
-        clear
-        display_progress
+		# Display progress
+		clear
+		display_progress
 
-        # Wait 5 seconds before refreshing
-        sleep 5
-    done
+		# Wait 5 seconds before refreshing
+		sleep 5
+	done
 }
 
 # Run only if executed directly
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
+	main "$@"
 fi

@@ -25,6 +25,7 @@ fi
 readonly PUPPET_BIN="/opt/puppetlabs/bin/puppet"
 readonly PUPPETSERVER_BIN="/opt/puppetlabs/bin/puppetserver"
 readonly TAILSCALE_AUTHKEYS_FILE="/etc/strealer/tailscale-authkeys.conf"
+readonly PUPPET_CERTNAME_FILE="/etc/strealer/puppet-certname"
 
 # Colors for output (use $'...' syntax for escape sequence interpretation)
 readonly RED=$'\033[0;31m'
@@ -63,6 +64,25 @@ get_tailscale_key_list() {
 	fi
 
 	echo "$key_list"
+}
+
+# Return the Puppet TLS identity. It is deliberately distinct from the stable
+# OS hostname used by the backend and observability stack.
+get_current_puppet_certname() {
+	local cert_file certname=""
+	cert_file=$(find /etc/puppetlabs/puppet/ssl/certs -maxdepth 1 -type f -name '*.pem' ! -name ca.pem -print -quit 2>/dev/null || true)
+	if [[ -n "$cert_file" ]]; then
+		certname=$(basename "$cert_file" .pem)
+	elif [[ -x "$PUPPET_BIN" ]] && [[ -f /etc/puppetlabs/puppet/puppet.conf ]]; then
+		certname=$($PUPPET_BIN config print certname 2>/dev/null || true)
+	elif [[ -s "$PUPPET_CERTNAME_FILE" ]]; then
+		certname=$(tr -d '[:space:]' <"$PUPPET_CERTNAME_FILE")
+	fi
+
+	if [[ -z "$certname" ]]; then
+		certname=$(hostname)
+	fi
+	printf '%s\n' "$certname"
 }
 
 # Check if container is running via HTTP health check (no docker access needed)
@@ -584,6 +604,8 @@ EOF
 
 	echo ""
 	log_info "Stopping services..."
+	local certname
+	certname=$(get_current_puppet_certname)
 	sudo systemctl stop puppet 2>/dev/null || true
 	cd /opt/alm 2>/dev/null && $DOCKER_COMPOSE_CMD down 2>/dev/null || true
 
@@ -621,18 +643,17 @@ EOF
 	sudo rm -rf /etc/puppetlabs/puppet/ssl
 	sudo rm -rf /opt/puppetlabs/puppet/cache
 	sudo rm -f /var/lib/puppet-config-done
+	sudo rm -f "$PUPPET_CERTNAME_FILE" /run/strealer-puppet-hostname
 
 	echo ""
 	log_info "Requesting certificate cleanup on Puppet server..."
-	local certname
-	certname=$(hostname)
 	# Request cert cleanup via SSH (if key-based auth available)
 	if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
 		root@puppet.strealer.io \
 		"${PUPPETSERVER_BIN} ca clean --certname $certname" 2>/dev/null; then
 		log_success "Old certificate cleaned on server"
 	else
-		log_warning "Could not clean cert remotely (will be handled by watchdog within 2 min)"
+		log_warning "Could not clean cert remotely; scheduled stale-certificate cleanup will remove it"
 	fi
 
 	echo ""
@@ -643,7 +664,7 @@ EOF
 	echo ""
 	log_info "Running Puppet setup script from repository..."
 	local setup_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh"
-	if curl -fsSL "$setup_url" | sudo bash; then
+	if curl -fsSL "$setup_url" | sudo ROTATE_CERTIFICATE=1 bash; then
 		log_success "Puppet setup completed"
 	else
 		log_error "Puppet setup script failed"
@@ -710,10 +731,11 @@ EOF
 		fi
 	fi
 
-	# PRIORITY 2: Use system hostname
+	# PRIORITY 2: Use the persisted Puppet identity. The OS hostname is the
+	# stable backend/metrics identity and intentionally has no rotation suffix.
 	if [[ -z "$certname" ]]; then
-		certname=$(hostname)
-		log_info "Using system hostname: $certname"
+		certname=$(get_current_puppet_certname)
+		log_info "Using persisted Puppet certname: $certname"
 	fi
 
 	# Validate certname format: <env>-<type>-<secret>-<serial>[-<epoch>]
@@ -917,34 +939,35 @@ EOF
 	# Stop containers first
 	log_info "Stopping ALM containers..."
 	$DOCKER_COMPOSE_CMD -f /opt/alm/docker-compose.yml down 2>/dev/null || true
+	local old_certname
+	old_certname=$(get_current_puppet_certname)
 
 	# Clean up Puppet state
 	log_info "Cleaning Puppet certificates and configuration..."
 	sudo rm -rf /etc/puppetlabs/puppet/ssl
 	sudo rm -f /etc/puppetlabs/puppet/puppet.conf
 	sudo rm -f /var/lib/puppet-config-done
+	sudo rm -f "$PUPPET_CERTNAME_FILE" /run/strealer-puppet-hostname
 
 	# Clean up Docker volumes (registration state)
 	log_info "Cleaning registration state..."
 	$DOCKER_CMD volume rm alm_config alm_persist 2>/dev/null || true
 
 	# Request cert cleanup on Puppet server
-	local old_certname
-	old_certname=$(hostname)
 	log_info "Requesting certificate cleanup on Puppet server..."
 	if ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
 		root@puppet.strealer.io \
 		"${PUPPETSERVER_BIN} ca clean --certname $old_certname" 2>/dev/null; then
 		log_success "Old certificate cleaned on server"
 	else
-		log_warning "Could not clean cert remotely (will be handled by watchdog)"
+		log_warning "Could not clean cert remotely; scheduled stale-certificate cleanup will remove it"
 	fi
 
 	# Run Puppet setup with new environment
 	echo ""
 	log_info "Running Puppet setup with new environment..."
 	local setup_url="https://raw.githubusercontent.com/strealer/alm-config/main/system-files/configure_puppet_agent.sh"
-	if curl -fsSL "$setup_url" | sudo ALM_ENVIRONMENT="$target_env" bash; then
+	if curl -fsSL "$setup_url" | sudo ALM_ENVIRONMENT="$target_env" ROTATE_CERTIFICATE=1 bash; then
 		log_success "Puppet setup completed with new environment"
 	else
 		log_error "Puppet setup failed"

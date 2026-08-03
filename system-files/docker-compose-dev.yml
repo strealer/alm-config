@@ -73,7 +73,7 @@ services:
   # ========================================================================
   # OBSERVABILITY: VECTOR LOG COLLECTOR
   # ========================================================================
-  
+
   # Vector log collector - ships logs to central Loki instance
   # Collects nginx logs, docker container logs, and system logs
   # Vector service removed - now running as native systemd service
@@ -159,8 +159,6 @@ volumes:
   # Persistent data volume for device-specific information
   # Docker-managed named volume - no host directories needed!
   alm_persist:
-
-
 
 # ============================================================================
 # DEPLOYMENT NOTES - DEVELOPMENT ENVIRONMENT
