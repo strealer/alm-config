@@ -55,6 +55,7 @@ jobs:
         run: |
           pipx install yamllint
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          sudo install "$(go env GOPATH)/bin/actionlint" /usr/local/bin/actionlint
           curl -1sLf https://setup.vector.dev | sudo -E bash
           sudo apt-get update
           sudo apt-get install -y "vector=$(cat .vector-version)-1"
