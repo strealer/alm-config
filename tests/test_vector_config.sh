@@ -32,3 +32,8 @@ if ! grep -q "docker inspect --format='{{.State.Status}}' alm" "$VECTOR_CONFIG";
 	echo "service health does not inspect the real ALM container" >&2
 	exit 1
 fi
+
+if ! grep -q '.source_type = "service_health"' "$VECTOR_CONFIG"; then
+	echo "service health events do not match Grafana's log_source selector" >&2
+	exit 1
+fi

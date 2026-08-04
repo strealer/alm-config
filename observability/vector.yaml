@@ -210,6 +210,12 @@ transforms:
         .source_type = "docker_images_info"
       }
 
+      # Vector's exec source reports the generic type "exec". Classify the
+      # service-health payload explicitly so Grafana's service panel can select it.
+      if exists(.docker) && exists(.puppet) && exists(.vector) && exists(.strealer) {
+        .source_type = "service_health"
+      }
+
       # Set source_type for PSI pressure data (has psi_cpu_some field)
       if exists(.psi_cpu_some) {
         .source_type = "psi_pressure"
