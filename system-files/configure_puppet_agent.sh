@@ -684,7 +684,11 @@ setup_tailscale() {
 
 		# Check if OS hostname changed (for example, environment migration)
 		local ts_hostname os_hostname
-		ts_hostname=$(tailscale status --json 2>/dev/null | grep -o '"HostName":"[^"]*"' | head -1 | cut -d'"' -f4)
+		if command -v jq >/dev/null 2>&1; then
+			ts_hostname=$(tailscale status --json 2>/dev/null | jq -r '.Self.HostName // empty')
+		else
+			ts_hostname=$(tailscale status --json 2>/dev/null | sed -n 's/^[[:space:]]*"HostName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+		fi
 		os_hostname=$(hostname)
 		if [[ -n "$ts_hostname" && "$ts_hostname" != "$os_hostname" ]]; then
 			echo "Hostname changed: Tailscale='$ts_hostname' OS='$os_hostname'. Restarting tailscaled..."

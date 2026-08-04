@@ -62,7 +62,7 @@ DEVICE_SERIAL=""
 get_puppet_certname() {
 	local certname=""
 	if [[ -x "$PUPPET_BIN" ]]; then
-		certname=$($PUPPET_BIN config print certname 2>/dev/null || true)
+		certname=$($PUPPET_BIN config print certname --section agent 2>/dev/null || true)
 	fi
 	printf '%s\n' "${certname:-$DEVICE_HOSTNAME}"
 }

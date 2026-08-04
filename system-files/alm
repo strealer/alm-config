@@ -74,7 +74,7 @@ get_current_puppet_certname() {
 	if [[ -n "$cert_file" ]]; then
 		certname=$(basename "$cert_file" .pem)
 	elif [[ -x "$PUPPET_BIN" ]] && [[ -f /etc/puppetlabs/puppet/puppet.conf ]]; then
-		certname=$($PUPPET_BIN config print certname 2>/dev/null || true)
+		certname=$($PUPPET_BIN config print certname --section agent 2>/dev/null || true)
 	elif [[ -s "$PUPPET_CERTNAME_FILE" ]]; then
 		certname=$(tr -d '[:space:]' <"$PUPPET_CERTNAME_FILE")
 	fi

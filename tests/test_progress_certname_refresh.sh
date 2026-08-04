@@ -8,7 +8,8 @@ trap 'rm -rf "$TEST_TMP"' EXIT
 mock_puppet="$TEST_TMP/puppet"
 cat >"$mock_puppet" <<'EOF'
 #!/bin/bash
-if [[ "${1:-}" == "config" ]] && [[ "${2:-}" == "print" ]] && [[ "${3:-}" == "certname" ]]; then
+if [[ "${1:-}" == "config" ]] && [[ "${2:-}" == "print" ]] && [[ "${3:-}" == "certname" ]] &&
+	[[ "${4:-}" == "--section" ]] && [[ "${5:-}" == "agent" ]]; then
 	value_file="$(dirname "$0")/certname"
 	[[ -s "$value_file" ]] || exit 1
 	cat "$value_file"
@@ -37,4 +38,4 @@ if [[ "$after_configuration" != 'prod-rpi4-test-12345678-1737049200123456789' ]]
 	exit 1
 fi
 
-echo "Progress monitor refreshes certname after Puppet configuration appears"
+echo "Progress monitor refreshes the agent-section certname after Puppet configuration appears"

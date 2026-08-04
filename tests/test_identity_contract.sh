@@ -22,6 +22,10 @@ require_pattern 'PUPPET_CERTNAME_FILE=.*\/etc\/strealer\/puppet-certname' "$BOOT
 	"Puppet certname must survive service retries"
 require_pattern 'puppet_certname=\$\(get_puppet_certname\)' "$PROGRESS" \
 	"progress checks must dynamically follow Puppet's configured certname"
+require_pattern 'config print certname --section agent' "$PROGRESS" \
+	"progress checks must read the agent section instead of Puppet's main-section default"
+require_pattern 'config print certname --section agent' "$REPO_ROOT/system-files/alm" \
+	"reset identity fallback must read the agent section instead of Puppet's main-section default"
 require_pattern 'get_hostname\(\)' "$VECTOR" \
 	"Vector labels must use the stable OS hostname"
 require_pattern 'io\.open\("/etc/hostname"' "$VECTOR" \
